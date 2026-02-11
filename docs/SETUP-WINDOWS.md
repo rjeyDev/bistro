@@ -176,6 +176,30 @@ Enter the postgres password when prompted.
 
 ## Troubleshooting
 
+**"Unable to connect to database"**  
+Do these in order:
+
+1. **Create a `.env` file** in the project root (copy from `env.template`). The app reads `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME` from `.env`. Without it, connection often fails or uses wrong defaults.
+   ```powershell
+   copy env.template .env
+   ```
+2. **Start PostgreSQL:**  
+   - Press **Win + R**, type `services.msc`, Enter.  
+   - Find **postgresql-x64-16** (or your version).  
+   - Right-click → **Start** (set to Automatic so it starts with Windows if you want).
+3. **Use the correct password in `.env`:**  
+   - Open `.env` and set `DB_PASSWORD=` to the **exact** password you set for the `postgres` user when you installed PostgreSQL.  
+   - Default in the template is `postgres`; if you chose something else, change it.
+4. **Create the database:**  
+   - Open **pgAdmin** → connect to your server → right-click **Databases** → **Create** → **Database** → name: `baytown` → Save.
+5. **Check port:**  
+   - In `.env`, `DB_PORT=5432` is the default. If PostgreSQL uses another port, change it.
+6. **Install dependencies** (needed for `.env` loading):  
+   ```powershell
+   npm install
+   ```
+   Then run the app again: `npm run start:dev`.
+
 **"node is not recognized"**  
 - Reinstall Node.js and ensure "Add to PATH" is checked, then open a **new** terminal.
 

@@ -8,6 +8,7 @@ import { OrderItem } from './order-item.entity';
 import { OrderItemModificator } from './order-item-modificator.entity';
 import { Product } from '../products/product.entity';
 import { Modificator } from '../products/modificator.entity';
+import { PrintersModule } from '../printers/printers.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { Modificator } from '../products/modificator.entity';
       Product,
       Modificator,
     ]),
+    PrintersModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService, OrdersGateway],

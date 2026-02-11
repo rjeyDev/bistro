@@ -14,6 +14,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { OrderStatus } from './enums/order-status.enum';
 import { OrdersGateway } from './orders.gateway';
+import { PrintersService } from '../printers/printers.service';
 import { getAnyName, getNameByLang, Lang, parseLang } from '../common/lang';
 
 export type OrderItemWithPrices = OrderItem & {
@@ -35,6 +36,7 @@ export class OrdersService {
     @InjectRepository(Modificator)
     private readonly modificatorRepository: Repository<Modificator>,
     private readonly ordersGateway: OrdersGateway,
+    private readonly printersService: PrintersService,
   ) {}
 
   async createOrder(createOrderDto: CreateOrderDto): Promise<Order> {
@@ -260,8 +262,8 @@ export class OrdersService {
     order.status = OrderStatus.ACCEPTED;
     const acceptedOrder = await this.orderRepository.save(order);
 
-    // Print check after order is accepted
-    this.printCheck(acceptedOrder);
+    // Print check to network printer(s) after order is accepted (fire-and-forget)
+    this.printCheck(acceptedOrder).catch(() => {});
 
     return acceptedOrder;
   }
@@ -391,15 +393,24 @@ export class OrdersService {
     return this.findOne(id);
   }
 
-  private printCheck(order: Order): void {
+  private async printCheck(order: Order): Promise<void> {
     const receipt = this.generateReceiptText(order);
     console.log(receipt);
 
-    // Here you could also:
-    // - Send to a physical printer API
-    // - Save to a file
-    // - Send via WebSocket to a printing service
-    // - Store in database for printing history
+    const port = parseInt(process.env.CHECK_PRINTER_PORT || '9100', 10);
+    const checkPrinters = await this.printersService.getCheckPrinters();
+
+    if (checkPrinters.length > 0) {
+      for (const printer of checkPrinters) {
+        await this.printersService.sendToNetworkPrinter(printer.ip, receipt, port);
+      }
+    } else if (process.env.CHECK_PRINTER_IP) {
+      await this.printersService.sendToNetworkPrinter(
+        process.env.CHECK_PRINTER_IP,
+        receipt,
+        port,
+      );
+    }
   }
 
   private generateReceiptText(order: Order): string {
