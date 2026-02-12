@@ -139,25 +139,77 @@ When the app is running you should see something like:
 
 ---
 
-## 7. Optional: Run migrations (if you use SQL migrations)
+## 7. After pulling updates – run new migrations (important)
 
-If you applied migrations (e.g. `add-order-notes.sql`) on another machine, run them on Windows too.
+If you **pushed/pulled** the latest code but **did not run the SQL migrations**, the database is missing new columns and tables. The backend will then throw errors (e.g. missing column `notes`, `deliveryPrice`, `printerId`, `deletedAt`, or table `printers`).
 
-**Option A – pgAdmin**
+**You need to run the migration SQL files** on your Windows PC in the `baytown` database. Run them in this order:
 
-1. Open pgAdmin → connect to your server → select database `baytown`.
-2. **Tools** → **Query Tool**.
-3. Open the `.sql` file (e.g. `migrations/add-order-notes.sql`) or paste its contents.
-4. Execute (F5 or play button).
+| Order | File | What it adds |
+|-------|------|----------------|
+| 1 | `migrations/add-modificators.sql` | Modificators support (if not already run) |
+| 2 | `migrations/alter-modificators-names-to-lang.sql` | Modificator name columns |
+| 3 | `migrations/add-order-notes.sql` | `orders.notes` |
+| 4 | `migrations/add-orders-delivery-price.sql` | `orders.deliveryPrice` |
+| 5 | `migrations/add-orders-printer-id.sql` | `orders.printerId` |
+| 6 | `migrations/add-printers-table.sql` | `printers` table |
+| 7 | `migrations/add-products-soft-delete.sql` | `products.deletedAt` |
+| 8 | `migrations/add-modificators-soft-delete.sql` | `modificators.deletedAt` |
 
-**Option B – psql (if in PATH)**
+**Option A – pgAdmin (easiest on Windows)**
+
+1. Open **pgAdmin** → connect to your server → right‑click database **baytown** → **Query Tool**.
+2. For each file above, open it (File → Open or paste contents), then run it (F5 or ▶).
+3. Start with the first; if a migration was already applied, it may say “column already exists” or “table already exists” – that’s OK (many use `IF NOT EXISTS`).
+
+**Option B – psql (if PostgreSQL bin is in PATH)**
+
+From the project folder, run each file:
 
 ```powershell
 cd C:\path\to\baytown-backend
 psql -U postgres -d baytown -f migrations/add-order-notes.sql
+psql -U postgres -d baytown -f migrations/add-orders-delivery-price.sql
+psql -U postgres -d baytown -f migrations/add-orders-printer-id.sql
+psql -U postgres -d baytown -f migrations/add-printers-table.sql
+psql -U postgres -d baytown -f migrations/add-products-soft-delete.sql
+psql -U postgres -d baytown -f migrations/add-modificators-soft-delete.sql
 ```
 
-Enter the postgres password when prompted.
+(Skip `add-modificators.sql` and `alter-modificators-names-to-lang.sql` if your DB was already set up with modificators.)
+
+After all migrations have been run, start the backend again: `npm run start:dev`.
+
+**Copy-paste SQL (run in pgAdmin Query Tool on database `baytown`):**
+
+If you prefer to run the commands directly, execute these in order (one block at a time, or all together):
+
+```sql
+-- 1. Order notes
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS notes TEXT;
+
+-- 2. Order delivery price
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "deliveryPrice" DOUBLE PRECISION NOT NULL DEFAULT 0;
+
+-- 3. Order active printer
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "printerId" INTEGER NULL;
+
+-- 4. Printers table
+CREATE TABLE IF NOT EXISTS printers (
+  "id" SERIAL PRIMARY KEY,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT NOW(),
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW(),
+  "name" VARCHAR(255) NOT NULL,
+  "ip" VARCHAR(45) NOT NULL,
+  "isKitchen" BOOLEAN NOT NULL DEFAULT false
+);
+
+-- 5. Products soft delete
+ALTER TABLE products ADD COLUMN IF NOT EXISTS "deletedAt" TIMESTAMP;
+
+-- 6. Modificators soft delete
+ALTER TABLE modificators ADD COLUMN IF NOT EXISTS "deletedAt" TIMESTAMP;
+```
 
 ---
 
