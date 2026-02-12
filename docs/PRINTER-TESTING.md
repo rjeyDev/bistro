@@ -65,6 +65,13 @@ If no printer is added in the **Printers** CRUD with `isKitchen: false`, this IP
 
 ## Troubleshooting
 
+- **Cut not working**  
+  The backend sends **ESC @** (init), then your receipt, then several line feeds, then **GS V m** (cut) as raw bytes. Default is **full cut** (`m=0`). If your printer still doesn’t cut:
+  - **Disable cut** and tear by hand: in `.env` set `PRINTER_CUT_ENABLED=false`, restart the app.
+  - Try **partial cut**: `PRINTER_CUT_CMD=2` (or `66` on some models).
+  - **More feed before cut**: `PRINTER_FEED_LINES=7` (allowed range 3–8; default 5). Restart after changes.
+  - Check your printer’s manual for the exact ESC/POS cut command (brands differ: Epson, Star, Bixolon, etc.) and set `PRINTER_CUT_CMD` to the value it expects.
+
 - **"Printer … timeout" in logs**  
   - The backend could not connect to the printer within the timeout (default 10 seconds).  
   - Check: printer is on and on the same network; IP is correct (e.g. from printer display or admin page).  

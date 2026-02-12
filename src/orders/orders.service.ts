@@ -446,27 +446,28 @@ export class OrdersService {
     if (status === OrderStatus.ACCEPTED) {
       const kitchenPrinters = await this.printersService.getKitchenPrinters();
       for (const printer of kitchenPrinters) {
-        await this.printersService.sendToNetworkPrinter(printer.ip, receiptNoPrices, port);
+        await this.printersService.sendToNetworkPrinter(printer.ip, receiptNoPrices, port, { cut: true });
       }
       if (selectedPrinter) {
-        await this.printersService.sendToNetworkPrinter(selectedPrinter.ip, receiptWithPrices, port);
+        await this.printersService.sendToNetworkPrinter(selectedPrinter.ip, receiptWithPrices, port, { cut: true });
       } else {
         const checkPrinters = await this.printersService.getCheckPrinters();
         if (checkPrinters.length > 0) {
           for (const printer of checkPrinters) {
-            await this.printersService.sendToNetworkPrinter(printer.ip, receiptWithPrices, port);
+            await this.printersService.sendToNetworkPrinter(printer.ip, receiptWithPrices, port, { cut: true });
           }
         } else if (process.env.CHECK_PRINTER_IP) {
           await this.printersService.sendToNetworkPrinter(
             process.env.CHECK_PRINTER_IP,
             receiptWithPrices,
             port,
+            { cut: true },
           );
         }
       }
     } else if (status === OrderStatus.PENDING || status === OrderStatus.CANCELLED) {
       if (selectedPrinter) {
-        await this.printersService.sendToNetworkPrinter(selectedPrinter.ip, receiptWithPrices, port);
+        await this.printersService.sendToNetworkPrinter(selectedPrinter.ip, receiptWithPrices, port, { cut: true });
       }
     }
   }
