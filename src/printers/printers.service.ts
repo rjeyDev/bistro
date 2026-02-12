@@ -58,6 +58,14 @@ export class PrintersService {
     });
   }
 
+  /** Get printers used for kitchen (isKitchen = true); print without prices */
+  async getKitchenPrinters(): Promise<Printer[]> {
+    return await this.printerRepository.find({
+      where: { isKitchen: true },
+      order: { id: 'ASC' },
+    });
+  }
+
   /**
    * Send raw text to a network printer (e.g. receipt printer on port 9100).
    * Does not throw; logs errors so a failing printer does not break the app.
@@ -69,16 +77,16 @@ export class PrintersService {
   ): Promise<void> {
     return new Promise((resolve) => {
       const socket = new net.Socket();
-      const timeout = 5000;
+      const timeoutMs = parseInt(process.env.CHECK_PRINTER_TIMEOUT_MS || '10000', 10) || 10000;
 
-      socket.setTimeout(timeout);
+      socket.setTimeout(timeoutMs);
       socket.on('error', (err) => {
         this.logger.warn(`Printer ${ip}:${port} error: ${err.message}`);
         socket.destroy();
         resolve();
       });
       socket.on('timeout', () => {
-        this.logger.warn(`Printer ${ip}:${port} timeout`);
+        this.logger.warn(`Printer ${ip}:${port} timeout (${timeoutMs}ms). Check IP, power, and port 9100.`);
         socket.destroy();
         resolve();
       });

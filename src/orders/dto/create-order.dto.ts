@@ -7,6 +7,9 @@ import {
   ArrayMinSize,
   MaxLength,
   IsOptional,
+  IsNumber,
+  Min,
+  IsInt,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -41,6 +44,17 @@ export class CreateOrderDto {
   @IsString()
   @MaxLength(50)
   device?: string;
+
+  @ApiPropertyOptional({ example: 2.5, description: 'Delivery fee (required when type is Delivery)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  deliveryPrice?: number;
+
+  @ApiPropertyOptional({ example: 1, description: 'Active printer ID (from GET /printers) for this order; receipt is sent to this printer' })
+  @IsOptional()
+  @IsInt()
+  printerId?: number;
 
   @ApiPropertyOptional({ example: 'No onions, extra sauce', description: 'Order notes' })
   @IsOptional()

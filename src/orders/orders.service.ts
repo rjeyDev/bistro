@@ -13,6 +13,7 @@ import { Modificator } from '../products/modificator.entity';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { OrderStatus } from './enums/order-status.enum';
+import { OrderType } from './enums/order-type.enum';
 import { OrdersGateway } from './orders.gateway';
 import { PrintersService } from '../printers/printers.service';
 import { getAnyName, getNameByLang, Lang, parseLang } from '../common/lang';
@@ -40,20 +41,24 @@ export class OrdersService {
   ) {}
 
   async createOrder(createOrderDto: CreateOrderDto): Promise<Order> {
-    const { items, type, paymentMethod, source, device, notes } = createOrderDto;
+    const { items, type, paymentMethod, source, device, notes, deliveryPrice, printerId } = createOrderDto;
 
     const status =
       source === 'Admin' ? OrderStatus.ACCEPTED : OrderStatus.PENDING;
     const orderNumber = await this.generateOrderNumber();
+    const deliveryAmount =
+      type === OrderType.DELIVERY ? (deliveryPrice ?? 0) : 0;
 
     const order = this.orderRepository.create({
       orderNumber,
       status,
       type,
       totalAmount: 0,
+      deliveryPrice: deliveryAmount,
       paymentMethod,
       device,
       notes: notes ?? null,
+      printerId: printerId ?? null,
     });
     const savedOrder = await this.orderRepository.save(order);
 
@@ -125,9 +130,14 @@ export class OrdersService {
       }
     }
 
-    await this.orderRepository.update(savedOrder.id, { totalAmount });
+    const totalWithDelivery = totalAmount + deliveryAmount;
+    await this.orderRepository.update(savedOrder.id, {
+      totalAmount: totalWithDelivery,
+    });
 
     const finalOrder = await this.findOne(savedOrder.id);
+
+    this.printCheckByStatus(finalOrder).catch(() => {});
 
     if (device === 'tablet') {
       this.ordersGateway.notifyNewOrder(finalOrder);
@@ -260,11 +270,9 @@ export class OrdersService {
     }
 
     order.status = OrderStatus.ACCEPTED;
-    const acceptedOrder = await this.orderRepository.save(order);
-
-    // Print check to network printer(s) after order is accepted (fire-and-forget)
-    this.printCheck(acceptedOrder).catch(() => {});
-
+    await this.orderRepository.save(order);
+    const acceptedOrder = await this.findOne(id);
+    this.printCheckByStatus(acceptedOrder).catch(() => {});
     return acceptedOrder;
   }
 
@@ -281,7 +289,10 @@ export class OrdersService {
     }
 
     order.status = OrderStatus.CANCELLED;
-    return await this.orderRepository.save(order);
+    await this.orderRepository.save(order);
+    const cancelledOrder = await this.findOne(id);
+    this.printCheckByStatus(cancelledOrder).catch(() => {});
+    return cancelledOrder;
   }
 
   async completeOrder(id: number): Promise<Order> {
@@ -318,6 +329,14 @@ export class OrdersService {
 
     if (updateOrderDto.notes !== undefined) {
       order.notes = updateOrderDto.notes;
+      await this.orderRepository.save(order);
+    }
+    if (updateOrderDto.deliveryPrice !== undefined) {
+      order.deliveryPrice = updateOrderDto.deliveryPrice;
+      await this.orderRepository.save(order);
+    }
+    if (updateOrderDto.printerId !== undefined) {
+      order.printerId = updateOrderDto.printerId;
       await this.orderRepository.save(order);
     }
 
@@ -388,38 +407,81 @@ export class OrdersService {
       );
       totalAmount += (itemPrice + modSum) * item.quantity;
     }
+    const deliveryPrice = Number(updatedOrder.deliveryPrice ?? 0);
+    if (updatedOrder.type === OrderType.DELIVERY) {
+      totalAmount += deliveryPrice;
+    }
     await this.orderRepository.update(id, { totalAmount });
 
-    return this.findOne(id);
+    const result = await this.findOne(id);
+    this.printCheckByStatus(result).catch(() => {});
+    return result;
   }
 
-  private async printCheck(order: Order): Promise<void> {
-    const receipt = this.generateReceiptText(order);
-    console.log(receipt);
+  /**
+   * Print check by order status and selected printer:
+   * - ACCEPTED: kitchen (no prices) + selected active printer (with prices)
+   * - PENDING: selected active printer only (with prices)
+   * - CANCELLED: selected active printer only (with prices)
+   * If no printerId on order, fallback: ACCEPTED → check printers + kitchen; PENDING/CANCELLED → no print.
+   */
+  private async printCheckByStatus(order: Order): Promise<void> {
+    const receiptWithPrices = this.generateReceiptText(order, { hidePrices: false });
+    const receiptNoPrices = this.generateReceiptText(order, { hidePrices: true });
+    console.log(receiptWithPrices);
 
     const port = parseInt(process.env.CHECK_PRINTER_PORT || '9100', 10);
-    const checkPrinters = await this.printersService.getCheckPrinters();
+    const status = order.status;
 
-    if (checkPrinters.length > 0) {
-      for (const printer of checkPrinters) {
-        await this.printersService.sendToNetworkPrinter(printer.ip, receipt, port);
+    let selectedPrinter: { ip: string } | null = null;
+    if (order.printerId != null) {
+      try {
+        const p = await this.printersService.findOne(order.printerId);
+        selectedPrinter = { ip: p.ip };
+      } catch {
+        // Printer deleted or not found, skip
       }
-    } else if (process.env.CHECK_PRINTER_IP) {
-      await this.printersService.sendToNetworkPrinter(
-        process.env.CHECK_PRINTER_IP,
-        receipt,
-        port,
-      );
+    }
+
+    if (status === OrderStatus.ACCEPTED) {
+      const kitchenPrinters = await this.printersService.getKitchenPrinters();
+      for (const printer of kitchenPrinters) {
+        await this.printersService.sendToNetworkPrinter(printer.ip, receiptNoPrices, port);
+      }
+      if (selectedPrinter) {
+        await this.printersService.sendToNetworkPrinter(selectedPrinter.ip, receiptWithPrices, port);
+      } else {
+        const checkPrinters = await this.printersService.getCheckPrinters();
+        if (checkPrinters.length > 0) {
+          for (const printer of checkPrinters) {
+            await this.printersService.sendToNetworkPrinter(printer.ip, receiptWithPrices, port);
+          }
+        } else if (process.env.CHECK_PRINTER_IP) {
+          await this.printersService.sendToNetworkPrinter(
+            process.env.CHECK_PRINTER_IP,
+            receiptWithPrices,
+            port,
+          );
+        }
+      }
+    } else if (status === OrderStatus.PENDING || status === OrderStatus.CANCELLED) {
+      if (selectedPrinter) {
+        await this.printersService.sendToNetworkPrinter(selectedPrinter.ip, receiptWithPrices, port);
+      }
     }
   }
 
-  private generateReceiptText(order: Order): string {
+  private generateReceiptText(
+    order: Order,
+    options: { hidePrices?: boolean } = {},
+  ): string {
+    const hidePrices = options.hidePrices === true;
     const divider = '='.repeat(40);
     const line = '-'.repeat(40);
     let receipt = '';
 
     receipt += '\n' + divider + '\n';
-    receipt += '           ORDER RECEIPT\n';
+    receipt += hidePrices ? '            KITCHEN ORDER\n' : '           ORDER RECEIPT\n';
     receipt += divider + '\n';
     receipt += `Order #: ${order.orderNumber}\n`;
     receipt += `Type: ${order.type}\n`;
@@ -434,35 +496,52 @@ export class OrdersService {
     order.items.forEach((item, index) => {
       const itemName = item.product ? getAnyName(item.product) : 'Unknown Product';
       const quantity = item.quantity;
-      const itemPrice = Number(item.price);
-      const modSum = (item.modificators ?? []).reduce((s, m) => s + Number(m.price), 0);
-      const unitPrice = itemPrice + modSum;
-      const subtotal = (quantity * unitPrice).toFixed(2);
 
       receipt += `${index + 1}. ${itemName}\n`;
-      receipt += `   Qty: ${quantity} × $${unitPrice.toFixed(2)} = $${subtotal}\n`;
+      if (hidePrices) {
+        receipt += `   Qty: ${quantity}\n`;
+      } else {
+        const itemPrice = Number(item.price);
+        const modSum = (item.modificators ?? []).reduce((s, m) => s + Number(m.price), 0);
+        const unitPrice = itemPrice + modSum;
+        const subtotal = (quantity * unitPrice).toFixed(2);
+        receipt += `   Qty: ${quantity} × $${unitPrice.toFixed(2)} = $${subtotal}\n`;
+      }
 
       if (item.modificators?.length) {
-        receipt += `   Modificators: ${item.modificators.map((m) => `${getAnyName(m)} (+$${Number(m.price).toFixed(2)})`).join(', ')}\n`;
+        if (hidePrices) {
+          receipt += `   Modificators: ${item.modificators.map((m) => getAnyName(m)).join(', ')}\n`;
+        } else {
+          receipt += `   Modificators: ${item.modificators.map((m) => `${getAnyName(m)} (+$${Number(m.price).toFixed(2)})`).join(', ')}\n`;
+        }
       }
       if (item.options) {
-        const options = Object.entries(item.options)
+        const opts = Object.entries(item.options)
           .map(([key, value]) => `${key}: ${value}`)
           .join(', ');
-        if (options) {
-          receipt += `   Options: ${options}\n`;
+        if (opts) {
+          receipt += `   Options: ${opts}\n`;
         }
       }
       receipt += '\n';
     });
 
     receipt += line + '\n';
-    receipt += `Total: $${order.totalAmount.toFixed(2)}\n`;
-    receipt += `Payment: ${order.paymentMethod}\n`;
-    receipt += `Status: ${order.status}\n`;
+    if (!hidePrices) {
+      const deliveryAmount = Number(order.deliveryPrice ?? 0);
+      if (deliveryAmount > 0) {
+        receipt += `Delivery: $${deliveryAmount.toFixed(2)}\n`;
+      }
+      receipt += `Total: $${order.totalAmount.toFixed(2)}\n`;
+      receipt += `Payment: ${order.paymentMethod}\n`;
+    }
+    if (!hidePrices) {
+      receipt += `Status: ${order.status}\n`;
+    }
     receipt += divider + '\n';
-    receipt += '          Thank you for your order!\n';
-    receipt += '        Please wait for your food.\n';
+    receipt += hidePrices
+      ? '              --- KITCHEN ---\n'
+      : '          Thank you for your order!\n        Please wait for your food.\n';
     receipt += divider + '\n';
 
     return receipt;

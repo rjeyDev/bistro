@@ -39,6 +39,9 @@ export class Order {
   @Column({ type: 'double precision' })
   totalAmount: number;
 
+  @Column({ type: 'double precision', default: 0 })
+  deliveryPrice: number;
+
   @Column({ type: 'varchar', length: 50 })
   paymentMethod: string;
 
@@ -47,6 +50,9 @@ export class Order {
 
   @Column({ type: 'text', nullable: true })
   notes: string | null;
+
+  @Column({ type: 'int', nullable: true })
+  printerId: number | null;
 
   @OneToMany(() => OrderItem, (orderItem) => orderItem.order, {
     cascade: true,

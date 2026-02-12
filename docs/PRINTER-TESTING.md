@@ -65,6 +65,13 @@ If no printer is added in the **Printers** CRUD with `isKitchen: false`, this IP
 
 ## Troubleshooting
 
+- **"Printer … timeout" in logs**  
+  - The backend could not connect to the printer within the timeout (default 10 seconds).  
+  - Check: printer is on and on the same network; IP is correct (e.g. from printer display or admin page).  
+  - From the PC run: `ping 192.168.100.101`. If ping fails, fix network or IP.  
+  - Ensure the printer supports raw TCP on port 9100 (most receipt/kitchen printers do).  
+  - Optional: increase timeout in `.env`: `CHECK_PRINTER_TIMEOUT_MS=15000` (15 seconds).
+
 - **Nothing prints**  
   - Confirm the printer’s IP (e.g. from its display or admin page).  
   - Ping from the PC: `ping 192.168.100.101`.  
