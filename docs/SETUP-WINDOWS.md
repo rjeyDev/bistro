@@ -139,7 +139,21 @@ When the app is running you should see something like:
 
 ---
 
-## 7. After pulling updates – run new migrations (important)
+## 7. Empty database – create all tables (no tables yet)
+
+If your **database has no tables** (e.g. fresh Windows install, or you want the same schema as on Mac), run **one** script to create everything:
+
+**Run this file in pgAdmin (Query Tool on database `baytown`):**
+
+- **`migrations/00-full-schema.sql`**
+
+It creates in the right order: enums → categories → products → modificators → product_modificators → orders → order_items → order_item_modificators → images → printers. After that, the backend should start without “relation/table does not exist” errors.
+
+Then (optional) seed sample data: `npm run seed`.
+
+---
+
+## 8. After pulling updates – run new migrations (important)
 
 If you **pushed/pulled** the latest code but **did not run the SQL migrations**, the database is missing new columns and tables. The backend will then throw errors (e.g. missing column `notes`, `deliveryPrice`, `printerId`, `deletedAt`, or table `printers`).
 
@@ -180,7 +194,7 @@ psql -U postgres -d baytown -f migrations/add-modificators-soft-delete.sql
 
 After all migrations have been run, start the backend again: `npm run start:dev`.
 
-**Copy-paste SQL (run in pgAdmin Query Tool on database `baytown`):**
+**Copy-paste SQL for missing columns only (if you already have tables):**
 
 If you prefer to run the commands directly, execute these in order (one block at a time, or all together):
 
