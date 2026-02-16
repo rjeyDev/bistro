@@ -1,6 +1,7 @@
-import { IsArray, ValidateNested, IsOptional, IsInt, Min, IsObject, IsString, IsNumber } from 'class-validator';
+import { IsArray, ValidateNested, IsOptional, IsInt, Min, IsObject, IsString, IsNumber, IsEnum } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { OrderType } from '../enums/order-type.enum';
 
 export class UpdateOrderItemDto {
   @ApiPropertyOptional({ example: 1, description: 'Order item ID' })
@@ -32,6 +33,11 @@ export class UpdateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => UpdateOrderItemDto)
   items?: UpdateOrderItemDto[];
+
+  @ApiPropertyOptional({ enum: OrderType, example: 'DineIn', description: 'Order type (DineIn, Takeaway, Delivery)' })
+  @IsOptional()
+  @IsEnum(OrderType)
+  type?: OrderType;
 
   @ApiPropertyOptional({ example: 2.5, description: 'Delivery fee (for Delivery orders)' })
   @IsOptional()

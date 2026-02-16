@@ -14,6 +14,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
+import { ReprintOrderDto } from './dto/reprint-order.dto';
 import { Order } from './order.entity';
 import { OrderStatus } from './enums/order-status.enum';
 import { parseLang } from '../common/lang';
@@ -115,6 +116,17 @@ export class OrdersController {
   @ApiResponse({ status: 400, description: 'Cannot complete order' })
   async complete(@Param('id') id: string): Promise<Order> {
     return await this.ordersService.completeOrder(+id);
+  }
+
+  @Post(':id/reprint')
+  @ApiOperation({ summary: 'Reprint order check to selected printers' })
+  @ApiResponse({ status: 200, description: 'Check sent to the given printers' })
+  @ApiResponse({ status: 404, description: 'Order not found' })
+  async reprint(
+    @Param('id') id: string,
+    @Body() dto: ReprintOrderDto,
+  ): Promise<{ message: string }> {
+    return await this.ordersService.reprintOrder(+id, dto.printerIds);
   }
 
   @Get(':id/receipt')

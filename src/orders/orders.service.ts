@@ -290,9 +290,7 @@ export class OrdersService {
 
     order.status = OrderStatus.CANCELLED;
     await this.orderRepository.save(order);
-    const cancelledOrder = await this.findOne(id);
-    this.printCheckByStatus(cancelledOrder).catch(() => {});
-    return cancelledOrder;
+    return this.findOne(id);
   }
 
   async completeOrder(id: number): Promise<Order> {
@@ -337,6 +335,10 @@ export class OrdersService {
     }
     if (updateOrderDto.printerId !== undefined) {
       order.printerId = updateOrderDto.printerId;
+      await this.orderRepository.save(order);
+    }
+    if (updateOrderDto.type !== undefined) {
+      order.type = updateOrderDto.type;
       await this.orderRepository.save(order);
     }
 
@@ -422,8 +424,8 @@ export class OrdersService {
    * Print check by order status and selected printer:
    * - ACCEPTED: kitchen (no prices) + selected active printer (with prices)
    * - PENDING: selected active printer only (with prices)
-   * - CANCELLED: selected active printer only (with prices)
-   * If no printerId on order, fallback: ACCEPTED → check printers + kitchen; PENDING/CANCELLED → no print.
+   * - CANCELLED: no print.
+   * If no printerId on order, fallback: ACCEPTED → check printers + kitchen; PENDING → no print.
    */
   private async printCheckByStatus(order: Order): Promise<void> {
     const receiptWithPrices = this.generateReceiptText(order, { hidePrices: false });
@@ -473,7 +475,7 @@ export class OrdersService {
           );
         }
       }
-    } else if (status === OrderStatus.PENDING || status === OrderStatus.CANCELLED) {
+    } else if (status === OrderStatus.PENDING) {
       if (selectedPrinter) {
         await this.printersService.sendToNetworkPrinter(selectedPrinter.ip, receiptWithPrices, port, { cut: true });
       }
@@ -788,6 +790,26 @@ export class OrdersService {
     return this.findOne(orderId)
       .then(order => this.generateReceiptText(order))
       .catch(() => null);
+  }
+
+  /**
+   * Reprint the order check (receipt with prices) to the given list of printer IDs.
+   */
+  async reprintOrder(orderId: number, printerIds: number[]): Promise<{ message: string }> {
+    const order = await this.findOne(orderId);
+    const receipt = this.generateReceiptText(order, { hidePrices: false });
+    const port = parseInt(process.env.CHECK_PRINTER_PORT || '9100', 10);
+    let sent = 0;
+    for (const pid of printerIds) {
+      try {
+        const printer = await this.printersService.findOne(pid);
+        await this.printersService.sendToNetworkPrinter(printer.ip, receipt, port, { cut: true });
+        sent++;
+      } catch {
+        // Skip invalid or missing printer
+      }
+    }
+    return { message: `Check printed to ${sent} printer(s).` };
   }
 
   private async generateOrderNumber(): Promise<number> {
