@@ -446,7 +446,15 @@ export class OrdersService {
     if (status === OrderStatus.ACCEPTED) {
       const kitchenPrinters = await this.printersService.getKitchenPrinters();
       for (const printer of kitchenPrinters) {
-        await this.printersService.sendToNetworkPrinter(printer.ip, receiptNoPrices, port, { cut: true });
+        // Print kitchen ticket (no prices) with the original, working cut command.
+        await this.printersService.sendToNetworkPrinter(
+          printer.ip,
+          receiptNoPrices,
+          port,
+          { cut: true },
+        );
+        // Then, on a separate connection, send a beep so it cannot interfere with cutting.
+        await this.printersService.beepPrinter(printer.ip, port);
       }
       if (selectedPrinter) {
         await this.printersService.sendToNetworkPrinter(selectedPrinter.ip, receiptWithPrices, port, { cut: true });
@@ -477,73 +485,300 @@ export class OrdersService {
     options: { hidePrices?: boolean } = {},
   ): string {
     const hidePrices = options.hidePrices === true;
-    const divider = '='.repeat(40);
-    const line = '-'.repeat(40);
+    const width = 46; // paper is wider than 40 chars
+    const divider = '='.repeat(width);
     let receipt = '';
 
-    receipt += '\n' + divider + '\n';
-    receipt += hidePrices ? '            KITCHEN ORDER\n' : '           ORDER RECEIPT\n';
-    receipt += divider + '\n';
-    receipt += `Order #: ${order.orderNumber}\n`;
-    receipt += `Type: ${order.type}\n`;
-    receipt += `Date: ${order.createdAt.toLocaleString()}\n`;
-    receipt += `Device: ${order.device || 'Unknown'}\n`;
-    if (order.notes) {
-      receipt += `Notes: ${order.notes}\n`;
-    }
-    receipt += line + '\n';
+    // ESC/POS styling for bold and size
+    const ESC_BOLD_ON = '\x1b\x45\x01';
+    const ESC_BOLD_OFF = '\x1b\x45\x00';
+    // Slightly larger text (double height) for table number and total
+    const ESC_SIZE_UP = '\x1d\x21\x01';   // GS ! 1 = double height
+    const ESC_SIZE_NORMAL = '\x1d\x21\x00';
+    // Line spacing: ~10% smaller for all checks (ESC 3 n = n/180"), then restore (ESC 2)
+    const ESC_LINE_SPACING_SMALL = '\x1b\x33\x16'; // 22/180" (was 24; ~10% less)
+    const ESC_LINE_SPACING_DEFAULT = '\x1b\x32';
 
-    // Print order items (use any available language for receipt)
+    const center = (text: string): string => {
+      const t = text.trim();
+      if (t.length >= width) return t;
+      const pad = Math.floor((width - t.length) / 2);
+      return ' '.repeat(pad) + t;
+    };
+
+    // Column widths for customer check table (no currency on dish rows; more space for name)
+    const nameColWidth = 24;
+    const qtyColWidth = 4;
+    const unitColWidth = 7;
+    const totalColWidth = 7;
+
+    // Table frame: ASCII only so borders don't print as Chinese on CP866/Xprinter
+    const H = '-';
+    const V = '|';
+    const TL = '+'; const TC = '+'; const TR = '+';
+    const ML = '+'; const MC = '+'; const MR = '+';
+    const BL = '+'; const BC = '+'; const BR = '+';
+
+    const tableTop =
+      TL +
+      H.repeat(nameColWidth) +
+      TC +
+      H.repeat(qtyColWidth) +
+      TC +
+      H.repeat(unitColWidth) +
+      TC +
+      H.repeat(totalColWidth) +
+      TR;
+    const tableMid =
+      ML +
+      H.repeat(nameColWidth) +
+      MC +
+      H.repeat(qtyColWidth) +
+      MC +
+      H.repeat(unitColWidth) +
+      MC +
+      H.repeat(totalColWidth) +
+      MR;
+    const tableBottom =
+      BL +
+      H.repeat(nameColWidth) +
+      BC +
+      H.repeat(qtyColWidth) +
+      BC +
+      H.repeat(unitColWidth) +
+      BC +
+      H.repeat(totalColWidth) +
+      BR;
+
+    const tableRow = (a: string, b: string, c: string, d: string): string =>
+      V + a.padEnd(nameColWidth).slice(0, nameColWidth) + V +
+      b.padStart(qtyColWidth).slice(0, qtyColWidth) + V +
+      c.padStart(unitColWidth).slice(0, unitColWidth) + V +
+      d.padStart(totalColWidth).slice(0, totalColWidth) + V;
+
+    // Kitchen table: 2 columns (name + qty only), same ASCII borders
+    const kitchenNameColWidth = 38;
+    const kitchenQtyColWidth = 6;
+    const kitchenTableTop = TL + H.repeat(kitchenNameColWidth) + TC + H.repeat(kitchenQtyColWidth) + TR;
+    const kitchenTableMid = ML + H.repeat(kitchenNameColWidth) + MC + H.repeat(kitchenQtyColWidth) + MR;
+    const kitchenTableBottom = BL + H.repeat(kitchenNameColWidth) + BC + H.repeat(kitchenQtyColWidth) + BR;
+    const kitchenTableRow = (name: string, qty: string): string =>
+      V + name.padEnd(kitchenNameColWidth).slice(0, kitchenNameColWidth) + V +
+      qty.padStart(kitchenQtyColWidth).slice(0, kitchenQtyColWidth) + V;
+
+    // Kitchen check = Russian; customer check = Turkmen (ASCII-only for printer)
+    const lang: Lang = hidePrices ? 'ru' : 'tm';
+
+    const tmToAscii = (s: string): string =>
+      s
+        .replace(/Ç/g, 'C').replace(/ç/g, 'c')
+        .replace(/Ü/g, 'U').replace(/ü/g, 'u')
+        .replace(/Ý/g, 'Y').replace(/ý/g, 'y')
+        .replace(/Ş/g, 'S').replace(/ş/g, 's')
+        .replace(/Ä/g, 'A').replace(/ä/g, 'a')
+        .replace(/Ö/g, 'O').replace(/ö/g, 'o')
+        .replace(/Ň/g, 'N').replace(/ň/g, 'n')
+        .replace(/Ž/g, 'Z').replace(/ž/g, 'z')
+        .replace(/Ğ/g, 'G').replace(/ğ/g, 'g');
+
+    const labelsRu = {
+      title: 'КУХОННЫЙ ЧЕК',
+      titleCustomer: 'ЧЕК КЛИЕНТА',
+      table: 'Стол №',
+      type: 'Тип:',
+      typeDineIn: 'На месте',
+      typeTakeaway: 'С собой',
+      typeDelivery: 'Доставка',
+      date: 'Дата:',
+      notes: 'Примечание:',
+      product: 'Товар',
+      qty: 'К-во',
+      price: 'Цена',
+      total: 'Сумма',
+      extra: 'Extra:',
+      options: 'Опции:',
+      delivery: 'Доставка:',
+      totalLabel: 'ИТОГО:',
+      thanks: 'СПАСИБО ЗА ЗАКАЗ!',
+      enjoy: 'Приятного аппетита.',
+      unknownProduct: 'Неизвестный товар',
+    };
+    const labelsTm = {
+      title: 'KUHNIA CEKI',
+      titleCustomer: 'MUSDERI CEKI',
+      table: 'Stol No',
+      type: 'Gornus:',
+      typeDineIn: 'Yerinde',
+      typeTakeaway: 'Elgetme',
+      typeDelivery: 'Getirilen',
+      date: 'Sene:',
+      notes: 'Belli:',
+      product: 'Haryt',
+      qty: 'Sany',
+      price: 'Baha',
+      total: 'Jemi',
+      extra: 'Gosmaca:',
+      options: 'Opsiyalar:',
+      delivery: 'Getirilen:',
+      totalLabel: 'JEMI:',
+      thanks: 'SARGYT UCIN SAGBOL!',
+      enjoy: 'Lezzetli iymitler!',
+      unknownProduct: 'Nebelli haryt',
+    };
+    const L = lang === 'ru' ? labelsRu : labelsTm;
+
+    const typeText =
+      order.type === OrderType.DINE_IN
+        ? L.typeDineIn
+        : order.type === OrderType.TAKEAWAY
+        ? L.typeTakeaway
+        : order.type === OrderType.DELIVERY
+        ? L.typeDelivery
+        : String(order.type);
+
+    receipt += hidePrices ? '' : `${center('Bistro')}\n`;
+        receipt += hidePrices ? '' : `\n${divider}\n`;
+    receipt += ESC_LINE_SPACING_SMALL;
+    receipt += hidePrices
+      ? ``
+      : `${center(L.titleCustomer)}\n`;
+    receipt += hidePrices ? '' : `${divider}\n`;
+
+    const tableLine = `${L.table} ${order.orderNumber}`;
+    const typeLine = `${L.type} ${typeText}`;
+
+    receipt += `${ESC_SIZE_UP}${ESC_BOLD_ON}${tableLine}${ESC_BOLD_OFF}${ESC_SIZE_NORMAL}\n`;
+    receipt += `${ESC_BOLD_ON}${typeLine}${ESC_BOLD_OFF}\n`;
+
+    if (!hidePrices) {
+      receipt += `${L.date} ${order.createdAt.toLocaleString()}\n`;
+    }
+
+    if (order.notes) {
+      const notesText = lang === 'tm' ? tmToAscii(order.notes) : order.notes;
+      receipt += `${L.notes} ${notesText}\n`;
+    }
+    if (hidePrices) {
+      receipt += `${kitchenTableTop}\n`;
+      receipt += `${ESC_BOLD_ON}${kitchenTableRow(L.product, L.qty)}${ESC_BOLD_OFF}\n`;
+      receipt += `${kitchenTableMid}\n`;
+    } else {
+      receipt += `${tableTop}\n`;
+      receipt += `${ESC_BOLD_ON}${tableRow(L.product, L.qty, L.price, L.total)}${ESC_BOLD_OFF}\n`;
+      receipt += `${tableMid}\n`;
+    }
+
     order.items.forEach((item, index) => {
-      const itemName = item.product ? getAnyName(item.product) : 'Unknown Product';
+      const rawName = item.product
+        ? getNameByLang(item.product, lang)
+        : L.unknownProduct;
+      const itemName = lang === 'tm' ? tmToAscii(rawName) : rawName;
       const quantity = item.quantity;
 
-      receipt += `${index + 1}. ${itemName}\n`;
+      const basePrice = Number(item.price);
+      const modSum = (item.modificators ?? []).reduce(
+        (s, m) => s + Number(m.price),
+        0,
+      );
+      const unitPrice = basePrice + modSum;
+      const subtotal = unitPrice * quantity;
+
       if (hidePrices) {
-        receipt += `   Qty: ${quantity}\n`;
+        const indexLabel = `${index + 1}. `;
+        let namePart = `${indexLabel}${itemName}`;
+        if (namePart.length > kitchenNameColWidth) {
+          namePart = namePart.slice(0, kitchenNameColWidth);
+        }
+        receipt += kitchenTableRow(namePart, String(quantity)) + '\n';
       } else {
-        const itemPrice = Number(item.price);
-        const modSum = (item.modificators ?? []).reduce((s, m) => s + Number(m.price), 0);
-        const unitPrice = itemPrice + modSum;
-        const subtotal = (quantity * unitPrice).toFixed(2);
-        receipt += `   Qty: ${quantity} × $${unitPrice.toFixed(2)} = $${subtotal}\n`;
+        // Customer check: table row (text inside bordered cells)
+        const indexLabel = `${index + 1}. `;
+        let namePart = `${indexLabel}${itemName}`;
+        if (namePart.length > nameColWidth) {
+          namePart = namePart.slice(0, nameColWidth);
+        }
+
+        receipt += tableRow(
+          namePart,
+          String(quantity),
+          unitPrice.toFixed(2),
+          subtotal.toFixed(2),
+        ) + '\n';
       }
 
       if (item.modificators?.length) {
-        if (hidePrices) {
-          receipt += `   Modificators: ${item.modificators.map((m) => getAnyName(m)).join(', ')}\n`;
-        } else {
-          receipt += `   Modificators: ${item.modificators.map((m) => `${getAnyName(m)} (+$${Number(m.price).toFixed(2)})`).join(', ')}\n`;
+        for (const m of item.modificators) {
+          const modNameRaw = getNameByLang(m, lang);
+          const modName = lang === 'tm' ? tmToAscii(modNameRaw) : modNameRaw;
+          if (hidePrices) {
+            const extraText = `${L.extra} ${modName}`;
+            const extraCol = extraText.length > kitchenNameColWidth ? extraText.slice(0, kitchenNameColWidth) : extraText;
+            receipt += kitchenTableRow(extraCol, '') + '\n';
+          } else {
+            const extraText = `  ${modName} (+${Number(m.price).toFixed(2)})`;
+            const extrasCol = extraText.length > nameColWidth
+              ? extraText.slice(0, nameColWidth)
+              : extraText;
+            receipt += tableRow(extrasCol, '', '', '') + '\n';
+          }
         }
       }
+
       if (item.options) {
         const opts = Object.entries(item.options)
           .map(([key, value]) => `${key}: ${value}`)
           .join(', ');
         if (opts) {
-          receipt += `   Options: ${opts}\n`;
+          const optsDisplay = lang === 'tm' ? tmToAscii(opts) : opts;
+          if (hidePrices) {
+            const optsCol = `${L.options} ${optsDisplay}`.slice(0, kitchenNameColWidth);
+            receipt += kitchenTableRow(optsCol, '') + '\n';
+          } else {
+            const optsText = `${L.options} ${optsDisplay}`;
+            const optsCol = optsText.length > nameColWidth
+              ? optsText.slice(0, nameColWidth)
+              : optsText;
+            receipt += tableRow(optsCol, '', '', '') + '\n';
+          }
         }
       }
-      receipt += '\n';
+
+      if (hidePrices) {
+        receipt += (index === order.items.length - 1 ? kitchenTableBottom : kitchenTableMid) + '\n';
+      } else {
+        receipt += (index === order.items.length - 1 ? tableBottom : tableMid) + '\n';
+      }
     });
 
-    receipt += line + '\n';
     if (!hidePrices) {
       const deliveryAmount = Number(order.deliveryPrice ?? 0);
       if (deliveryAmount > 0) {
-        receipt += `Delivery: $${deliveryAmount.toFixed(2)}\n`;
+        receipt += `${L.delivery} ${deliveryAmount.toFixed(2)}\n`;
       }
-      receipt += `Total: $${order.totalAmount.toFixed(2)}\n`;
-      receipt += `Payment: ${order.paymentMethod}\n`;
+      const totalLabel = L.totalLabel;
+      const totalValue = `${order.totalAmount.toFixed(2)} TMT`;
+      const spacesCount = Math.max(
+        1,
+        width - totalLabel.length - totalValue.length,
+      );
+      receipt +=
+      '\n' +
+        ESC_SIZE_UP +
+        ESC_BOLD_ON +
+        totalLabel +
+        ' '.repeat(spacesCount) +
+        totalValue +
+        ESC_BOLD_OFF +
+        ESC_SIZE_NORMAL +
+        '\n\n';
     }
+    receipt += hidePrices ? '' : `${divider}\n`;
     if (!hidePrices) {
-      receipt += `Status: ${order.status}\n`;
+      receipt += `${center(L.thanks)}\n`;
+      receipt += `${center(L.enjoy)}\n`;
     }
-    receipt += divider + '\n';
-    receipt += hidePrices
-      ? '              --- KITCHEN ---\n'
-      : '          Thank you for your order!\n        Please wait for your food.\n';
-    receipt += divider + '\n';
+    receipt += hidePrices ? '' : `${divider}\n`;
+    receipt += ESC_LINE_SPACING_DEFAULT;
 
     return receipt;
   }
@@ -557,35 +792,22 @@ export class OrdersService {
 
   private async generateOrderNumber(): Promise<number> {
     const now = new Date();
-    const currentHour = now.getHours();
+    const today = now.toISOString().split('T')[0];
+    const dayStart = new Date(`${today}T00:00:00.000Z`);
+    const dayEnd = new Date(`${today}T23:59:59.999Z`);
 
-    // Determine the reset period based on current time
-    let periodStart: Date;
-    let periodEnd: Date;
-
-    if (currentHour < 12) {
-      // Before noon: orders from midnight to noon
-      const today = now.toISOString().split('T')[0];
-      periodStart = new Date(today + 'T00:00:00.000Z');
-      periodEnd = new Date(today + 'T11:59:59.999Z');
-    } else {
-      // After noon: orders from noon to midnight
-      const today = now.toISOString().split('T')[0];
-      periodStart = new Date(today + 'T12:00:00.000Z');
-      periodEnd = new Date(today + 'T23:59:59.999Z');
-    }
-
-    // Find the highest order number in the current period
-    const lastOrderInPeriod = await this.orderRepository
+    // Find the highest table number (orderNumber) used today
+    const lastOrderToday = await this.orderRepository
       .createQueryBuilder('order')
-      .where('order.createdAt >= :periodStart', { periodStart })
-      .andWhere('order.createdAt <= :periodEnd', { periodEnd })
+      .where('order.createdAt >= :dayStart', { dayStart })
+      .andWhere('order.createdAt <= :dayEnd', { dayEnd })
       .orderBy('order.orderNumber', 'DESC')
       .getOne();
 
     let nextNumber = 1;
-    if (lastOrderInPeriod && lastOrderInPeriod.orderNumber != null) {
-      nextNumber = lastOrderInPeriod.orderNumber + 1;
+    if (lastOrderToday && lastOrderToday.orderNumber != null) {
+      const current = lastOrderToday.orderNumber;
+      nextNumber = current >= 50 ? 1 : current + 1;
     }
 
     return nextNumber;

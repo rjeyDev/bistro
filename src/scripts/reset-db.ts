@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { DataSource } from 'typeorm';
 import { Product } from '../products/product.entity';
 import { Category } from '../products/category.entity';

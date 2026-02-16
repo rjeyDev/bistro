@@ -2,48 +2,20 @@ import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as net from 'net';
-import iconv from 'iconv-lite';
 import { Printer } from './printer.entity';
 import { CreatePrinterDto } from './dto/create-printer.dto';
 import { UpdatePrinterDto } from './dto/update-printer.dto';
 
 const DEFAULT_PRINTER_PORT = 9100;
-
-/** ESC @ — initialize printer (many need this before other commands) */
-const ESC_INIT = Buffer.from([0x1b, 0x40]);
-/** ESC t n — select code page */
-const ESC = 0x1b;
-/** Line feed */
-const LF = 0x0a;
-/** ESC/POS: GS V m — cut. m=0,1 full; m=2,3 partial. Some use 66 for partial. */
 const GS = 0x1d;
-
 const BELL = 0x07;
 
-// Xprinter/clones: CP866 + code page 9 for Russian. (Code page 17 often maps to Chinese on clones.)
-const PRINTER_ENCODING = process.env.PRINTER_ENCODING || 'cp866';
-const _cp = parseInt(process.env.PRINTER_CODEPAGE ?? '9', 10);
-const PRINTER_CODEPAGE_BYTE = Number.isNaN(_cp) || _cp < 0 || _cp > 255 ? 9 : _cp;
-
 function getCutBytes(): Buffer {
-  if (process.env.PRINTER_CUT_ENABLED === 'false') return Buffer.alloc(0);
   const m =
     process.env.PRINTER_CUT_CMD !== undefined
       ? parseInt(process.env.PRINTER_CUT_CMD, 10)
-      : 0;
+      : 2;
   return Buffer.from([GS, 0x56, m & 0xff]);
-}
-
-function getCodepageBytes(): Buffer {
-  return Buffer.from([ESC, 0x74, PRINTER_CODEPAGE_BYTE]);
-}
-
-function encodeText(text: string): Buffer {
-  try {
-    return iconv.encode(text, PRINTER_ENCODING as any);
-  } catch {
-    return Buffer.from(text, 'ascii');
-  }
 }
 
 function getBeepBytes(): Buffer {
@@ -55,41 +27,9 @@ function getBeepBytes(): Buffer {
         )
       : 3;
 
-  // Build ESC/POS beep sequences.
-  // Many printers support ESC p to drive a buzzer or cash-drawer output,
-  // and some also react to BEL (0x07). We send both.
-  const t1 = 100; // 100 × 2 ms = 200 ms ON
-  const t2 = 50; // 100 × 2 ms = 100 ms OFF
-
-  const chunks: Buffer[] = [];
-  for (let i = 0; i < times; i += 1) {
-    // ESC p 0 t1 t2  -> pulse on connector 1
-    chunks.push(Buffer.from([ESC, 0x70, 0x00, t1, t2]));
-    // ESC p 1 t1 t2  -> pulse on connector 2 / external buzzer (on many models)
-    chunks.push(Buffer.from([ESC, 0x70, 0x01, t1, t2]));
-    // Fallback BEL character
-    chunks.push(Buffer.from([BELL]));
-  }
-
-  return Buffer.concat(chunks);
-}
-
-/** Build buffer: init + codepage + text + feed lines + cut. */
-function buildPrintBuffer(text: string, withCut: boolean): Buffer {
-  const textBuf = encodeText(text);
-  if (!withCut) return Buffer.concat([ESC_INIT, getCodepageBytes(), textBuf]);
-  const feedLines = Math.min(
-    8,
-    Math.max(3, parseInt(process.env.PRINTER_FEED_LINES || '5', 10) || 5),
-  );
-  const feed = Buffer.alloc(feedLines, LF);
-  return Buffer.concat([
-    ESC_INIT,
-    getCodepageBytes(),
-    textBuf,
-    feed,
-    getCutBytes(),
-  ]);
+  // Many ESC/POS printers react to BEL (0x07);
+  // send it a few times to increase the chance of a noticeable beep.
+  return Buffer.from(Array(times).fill(BELL));
 }
 
 @Injectable()
@@ -152,7 +92,6 @@ export class PrintersService {
 
   /**
    * Send raw text to a network printer (e.g. receipt printer on port 9100).
-   * Optionally appends ESC/POS partial cut after the text.
    * Does not throw; logs errors so a failing printer does not break the app.
    */
   async sendToNetworkPrinter(
@@ -161,8 +100,10 @@ export class PrintersService {
     port: number = DEFAULT_PRINTER_PORT,
     options?: { cut?: boolean },
   ): Promise<void> {
-    const data = buildPrintBuffer(text, options?.cut ?? false);
-
+    const textBuf = Buffer.from(text, 'utf8');
+    const data = options?.cut
+      ? Buffer.concat([textBuf, Buffer.from([0x0a, 0x0a]), getCutBytes()])
+      : textBuf;
     return new Promise((resolve) => {
       const socket = new net.Socket();
       const timeoutMs = parseInt(process.env.CHECK_PRINTER_TIMEOUT_MS || '10000', 10) || 10000;
@@ -181,15 +122,21 @@ export class PrintersService {
       socket.on('close', () => resolve());
 
       socket.connect(port, ip, () => {
-        socket.write(data, (err) => {
-          if (err) this.logger.warn(`Printer ${ip}:${port} write error: ${err.message}`);
+        socket.write(data, 'utf8', (err) => {
+          if (err)
+            this.logger.warn(
+              `Printer ${ip}:${port} write error: ${err.message}`,
+            );
           socket.end();
         });
       });
     });
   }
 
-  
+  /**
+   * Send only a beep sequence to a network printer.
+   * Uses a separate connection so it cannot interfere with cut commands.
+   */
   async beepPrinter(
     ip: string,
     port: number = DEFAULT_PRINTER_PORT,
