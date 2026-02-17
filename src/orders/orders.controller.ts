@@ -9,6 +9,7 @@ import {
   HttpCode,
   HttpStatus,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { OrdersService, OrderStatsResponse } from './orders.service';
@@ -18,6 +19,15 @@ import { ReprintOrderDto } from './dto/reprint-order.dto';
 import { Order } from './order.entity';
 import { OrderStatus } from './enums/order-status.enum';
 import { parseLang } from '../common/lang';
+
+/** Ensures :id is a valid positive integer; throws BadRequestException otherwise. */
+function parseOrderId(id: string): number {
+  const n = parseInt(id, 10);
+  if (Number.isNaN(n) || n < 1 || !Number.isInteger(n)) {
+    throw new BadRequestException('Invalid order ID');
+  }
+  return n;
+}
 
 @ApiTags('orders')
 @Controller('orders')
@@ -91,7 +101,7 @@ export class OrdersController {
     @Param('id') id: string,
     @Query('lang') lang?: string,
   ): Promise<Order> {
-    return await this.ordersService.findOne(+id, parseLang(lang));
+    return await this.ordersService.findOne(parseOrderId(id), parseLang(lang));
   }
 
   @Patch(':id')
@@ -103,7 +113,7 @@ export class OrdersController {
     @Param('id') id: string,
     @Body() updateOrderDto: UpdateOrderDto,
   ): Promise<Order> {
-    return await this.ordersService.updateOrder(+id, updateOrderDto);
+    return await this.ordersService.updateOrder(parseOrderId(id), updateOrderDto);
   }
 
   @Patch(':id/accept')
@@ -111,7 +121,7 @@ export class OrdersController {
   @ApiResponse({ status: 200, description: 'Order accepted successfully' })
   @ApiResponse({ status: 400, description: 'Cannot accept order' })
   async accept(@Param('id') id: string): Promise<Order> {
-    return await this.ordersService.acceptOrder(+id);
+    return await this.ordersService.acceptOrder(parseOrderId(id));
   }
 
   @Patch(':id/cancel')
@@ -119,7 +129,7 @@ export class OrdersController {
   @ApiResponse({ status: 200, description: 'Order cancelled successfully' })
   @ApiResponse({ status: 400, description: 'Cannot cancel order' })
   async cancel(@Param('id') id: string): Promise<Order> {
-    return await this.ordersService.cancelOrder(+id);
+    return await this.ordersService.cancelOrder(parseOrderId(id));
   }
 
   @Patch(':id/complete')
@@ -127,7 +137,7 @@ export class OrdersController {
   @ApiResponse({ status: 200, description: 'Order completed successfully' })
   @ApiResponse({ status: 400, description: 'Cannot complete order' })
   async complete(@Param('id') id: string): Promise<Order> {
-    return await this.ordersService.completeOrder(+id);
+    return await this.ordersService.completeOrder(parseOrderId(id));
   }
 
   @Post(':id/reprint')
@@ -138,7 +148,7 @@ export class OrdersController {
     @Param('id') id: string,
     @Body() dto: ReprintOrderDto,
   ): Promise<{ message: string }> {
-    return await this.ordersService.reprintOrder(+id, dto.printerIds);
+    return await this.ordersService.reprintOrder(parseOrderId(id), dto.printerIds);
   }
 
   @Get(':id/receipt')
@@ -146,7 +156,7 @@ export class OrdersController {
   @ApiResponse({ status: 200, description: 'Return order receipt' })
   @ApiResponse({ status: 404, description: 'Order not found' })
   async getReceipt(@Param('id') id: string): Promise<string> {
-    const receipt = await this.ordersService.getReceiptText(+id);
+    const receipt = await this.ordersService.getReceiptText(parseOrderId(id));
     if (!receipt) {
       throw new NotFoundException('Order not found');
     }
