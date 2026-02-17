@@ -27,6 +27,7 @@ export type OrderStatsResponse = {
   netSalesToday: number;
   netSalesInRange: number;
   orderCountByStatus: { pending: number; accepted: number; cancelled: number; completed: number };
+  todayOrderCountByStatus: { pending: number; accepted: number; cancelled: number; completed: number };
   mostSoldProducts: Array<{
     productId: number;
     name: string;
@@ -894,6 +895,28 @@ export class OrdersService {
       else if (row.status === OrderStatus.COMPLETED) orderCountByStatus.completed = count;
     }
 
+    const todayCountQb = this.orderRepository
+      .createQueryBuilder('o')
+      .select('o.status', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .where('o.createdAt >= :todayStart', { todayStart })
+      .andWhere('o.createdAt <= :todayEnd', { todayEnd })
+      .groupBy('o.status');
+    const todayCountRows = await todayCountQb.getRawMany<{ status: string; count: string }>();
+    const todayOrderCountByStatus = {
+      pending: 0,
+      accepted: 0,
+      cancelled: 0,
+      completed: 0,
+    };
+    for (const row of todayCountRows) {
+      const count = parseInt(row.count, 10) || 0;
+      if (row.status === OrderStatus.PENDING) todayOrderCountByStatus.pending = count;
+      else if (row.status === OrderStatus.ACCEPTED) todayOrderCountByStatus.accepted = count;
+      else if (row.status === OrderStatus.CANCELLED) todayOrderCountByStatus.cancelled = count;
+      else if (row.status === OrderStatus.COMPLETED) todayOrderCountByStatus.completed = count;
+    }
+
     const rangeParams: { dateFrom?: Date; dateTo?: Date } = {};
     if (dateFrom) {
       const from = new Date(dateFrom);
@@ -951,6 +974,7 @@ export class OrdersService {
       netSalesToday,
       netSalesInRange,
       orderCountByStatus,
+      todayOrderCountByStatus,
       mostSoldProducts,
     };
   }
