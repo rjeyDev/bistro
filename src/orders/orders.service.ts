@@ -203,8 +203,12 @@ export class OrdersService {
   }
 
   async findOne(id: number, lang?: Lang): Promise<Order> {
+    const idNum = Number(id);
+    if (Number.isNaN(idNum) || idNum < 1 || !Number.isInteger(idNum)) {
+      throw new BadRequestException('Invalid order ID');
+    }
     const order = await this.orderRepository.findOne({
-      where: { id },
+      where: { id: idNum },
       relations: ['items', 'items.product', 'items.modificators'],
     });
 
