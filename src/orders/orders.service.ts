@@ -23,6 +23,18 @@ export type OrderItemWithPrices = OrderItem & {
   totalPrice: number;
 };
 
+export type OrderStatsResponse = {
+  netSalesToday: number;
+  netSalesInRange: number;
+  orderCountByStatus: { pending: number; accepted: number; cancelled: number; completed: number };
+  mostSoldProducts: Array<{
+    productId: number;
+    name: string;
+    quantitySold: number;
+    totalRevenue: number;
+  }>;
+};
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -810,6 +822,133 @@ export class OrdersService {
       }
     }
     return { message: `Check printed to ${sent} printer(s).` };
+  }
+
+  /**
+   * Order statistics: net sales (today and date range), order counts by status, most sold products.
+   * Only Accepted and Completed orders count toward sales. If no date range, range = all time.
+   */
+  async getStats(dateFrom?: string, dateTo?: string): Promise<OrderStatsResponse> {
+    const salesStatuses = [OrderStatus.ACCEPTED, OrderStatus.COMPLETED];
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+    const qbToday = this.orderRepository
+      .createQueryBuilder('o')
+      .select('COALESCE(SUM(o.totalAmount), 0)', 'sum')
+      .where('o.status IN (:...salesStatuses)', { salesStatuses })
+      .andWhere('o.createdAt >= :todayStart', { todayStart })
+      .andWhere('o.createdAt <= :todayEnd', { todayEnd });
+    const netSalesTodayResult = await qbToday.getRawOne<{ sum: string }>();
+    const netSalesToday = parseFloat(netSalesTodayResult?.sum ?? '0') || 0;
+
+    const qbRange = this.orderRepository
+      .createQueryBuilder('o')
+      .select('COALESCE(SUM(o.totalAmount), 0)', 'sum')
+      .where('o.status IN (:...salesStatuses)', { salesStatuses });
+    if (dateFrom) {
+      const from = new Date(dateFrom);
+      from.setUTCHours(0, 0, 0, 0);
+      qbRange.andWhere('o.createdAt >= :dateFrom', { dateFrom: from });
+    }
+    if (dateTo) {
+      const to = new Date(dateTo);
+      to.setUTCHours(23, 59, 59, 999);
+      qbRange.andWhere('o.createdAt <= :dateTo', { dateTo: to });
+    }
+    const netSalesInRangeResult = await qbRange.getRawOne<{ sum: string }>();
+    const netSalesInRange = parseFloat(netSalesInRangeResult?.sum ?? '0') || 0;
+
+    const countQb = this.orderRepository
+      .createQueryBuilder('o')
+      .select('o.status', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('o.status');
+    if (dateFrom) {
+      const from = new Date(dateFrom);
+      from.setUTCHours(0, 0, 0, 0);
+      countQb.andWhere('o.createdAt >= :dateFrom', { dateFrom: from });
+    }
+    if (dateTo) {
+      const to = new Date(dateTo);
+      to.setUTCHours(23, 59, 59, 999);
+      countQb.andWhere('o.createdAt <= :dateTo', { dateTo: to });
+    }
+    const countRows = await countQb.getRawMany<{ status: string; count: string }>();
+    const orderCountByStatus = {
+      pending: 0,
+      accepted: 0,
+      cancelled: 0,
+      completed: 0,
+    };
+    for (const row of countRows) {
+      const count = parseInt(row.count, 10) || 0;
+      if (row.status === OrderStatus.PENDING) orderCountByStatus.pending = count;
+      else if (row.status === OrderStatus.ACCEPTED) orderCountByStatus.accepted = count;
+      else if (row.status === OrderStatus.CANCELLED) orderCountByStatus.cancelled = count;
+      else if (row.status === OrderStatus.COMPLETED) orderCountByStatus.completed = count;
+    }
+
+    const rangeParams: { dateFrom?: Date; dateTo?: Date } = {};
+    if (dateFrom) {
+      const from = new Date(dateFrom);
+      from.setUTCHours(0, 0, 0, 0);
+      rangeParams.dateFrom = from;
+    }
+    if (dateTo) {
+      const to = new Date(dateTo);
+      to.setUTCHours(23, 59, 59, 999);
+      rangeParams.dateTo = to;
+    }
+
+    const productQb = this.orderItemRepository
+      .createQueryBuilder('oi')
+      .innerJoin('oi.order', 'o')
+      .innerJoin('oi.product', 'p')
+      .leftJoin(
+        subQuery =>
+          subQuery
+            .select('m."orderItemId"', 'orderItemId')
+            .addSelect('SUM(m.price)', 'modTotal')
+            .from(OrderItemModificator, 'm')
+            .groupBy('m."orderItemId"'),
+        'mod',
+        'mod."orderItemId" = oi.id',
+      )
+      .select('oi.productId', 'productId')
+      .addSelect('p.nameEn', 'name')
+      .addSelect('SUM(oi.quantity)', 'quantitySold')
+      .addSelect(
+        `SUM(("oi"."price" + COALESCE("mod"."modTotal", 0)) * "oi"."quantity")`,
+        'totalRevenue',
+      )
+      .where('o.status IN (:...salesStatuses)', { salesStatuses })
+      .groupBy('oi.productId')
+      .addGroupBy('p.nameEn')
+      .orderBy('SUM("oi"."quantity")', 'DESC');
+    if (rangeParams.dateFrom) productQb.andWhere('o.createdAt >= :dateFrom', rangeParams);
+    if (rangeParams.dateTo) productQb.andWhere('o.createdAt <= :dateTo', rangeParams);
+
+    const productRows = await productQb.getRawMany<{
+      productId: string;
+      name: string;
+      quantitySold: string;
+      totalRevenue: string;
+    }>();
+    const mostSoldProducts = productRows.map(row => ({
+      productId: parseInt(row.productId, 10),
+      name: row.name ?? '',
+      quantitySold: parseInt(row.quantitySold, 10) || 0,
+      totalRevenue: parseFloat(row.totalRevenue ?? '0') || 0,
+    }));
+
+    return {
+      netSalesToday,
+      netSalesInRange,
+      orderCountByStatus,
+      mostSoldProducts,
+    };
   }
 
   private async generateOrderNumber(): Promise<number> {

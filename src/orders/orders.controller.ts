@@ -11,7 +11,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
-import { OrdersService } from './orders.service';
+import { OrdersService, OrderStatsResponse } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ReprintOrderDto } from './dto/reprint-order.dto';
@@ -68,6 +68,18 @@ export class OrdersController {
     if (dateFrom) filters.dateFrom = dateFrom;
     if (dateTo) filters.dateTo = dateTo;
     return await this.ordersService.findAll(status, parseLang(lang), filters);
+  }
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Get order statistics (net sales, counts by status, most sold products)' })
+  @ApiQuery({ name: 'dateFrom', required: false, type: String, description: 'Start of date range (e.g. 2025-02-01)' })
+  @ApiQuery({ name: 'dateTo', required: false, type: String, description: 'End of date range (e.g. 2025-02-07)' })
+  @ApiResponse({ status: 200, description: 'Net sales today and in range, order counts by status, most sold products' })
+  async getStats(
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ): Promise<OrderStatsResponse> {
+    return await this.ordersService.getStats(dateFrom, dateTo);
   }
 
   @Get(':id')
