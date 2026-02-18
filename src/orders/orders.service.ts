@@ -277,7 +277,7 @@ export class OrdersService {
     });
   }
 
-  async acceptOrder(id: number): Promise<Order> {
+  async acceptOrder(id: number, printerId?: number): Promise<Order> {
     const order = await this.findOne(id);
 
     if (order.status !== OrderStatus.PENDING) {
@@ -287,6 +287,9 @@ export class OrdersService {
     }
 
     order.status = OrderStatus.ACCEPTED;
+    if (printerId !== undefined && printerId !== null) {
+      order.printerId = printerId;
+    }
     await this.orderRepository.save(order);
     const acceptedOrder = await this.findOne(id);
     this.printCheckByStatus(acceptedOrder).catch(() => {});
@@ -464,34 +467,36 @@ export class OrdersService {
 
     if (status === OrderStatus.ACCEPTED) {
       const kitchenPrinters = await this.printersService.getKitchenPrinters();
-      for (const printer of kitchenPrinters) {
-        // Print kitchen ticket (no prices) with the original, working cut command.
+      // Run customer check and kitchen prints in parallel so customer receipt is not delayed
+      const customerPrintPromise = (async () => {
+        if (selectedPrinter) {
+          await this.printersService.sendToNetworkPrinter(selectedPrinter.ip, receiptWithPrices, port, { cut: true });
+        } else {
+          const checkPrinters = await this.printersService.getCheckPrinters();
+          if (checkPrinters.length > 0) {
+            for (const printer of checkPrinters) {
+              await this.printersService.sendToNetworkPrinter(printer.ip, receiptWithPrices, port, { cut: true });
+            }
+          } else if (process.env.CHECK_PRINTER_IP) {
+            await this.printersService.sendToNetworkPrinter(
+              process.env.CHECK_PRINTER_IP,
+              receiptWithPrices,
+              port,
+              { cut: true },
+            );
+          }
+        }
+      })();
+      const kitchenPrintPromises = kitchenPrinters.map(async (printer) => {
         await this.printersService.sendToNetworkPrinter(
           printer.ip,
           receiptNoPrices,
           port,
           { cut: true },
         );
-        // Then, on a separate connection, send a beep so it cannot interfere with cutting.
         await this.printersService.beepPrinter(printer.ip, port);
-      }
-      if (selectedPrinter) {
-        await this.printersService.sendToNetworkPrinter(selectedPrinter.ip, receiptWithPrices, port, { cut: true });
-      } else {
-        const checkPrinters = await this.printersService.getCheckPrinters();
-        if (checkPrinters.length > 0) {
-          for (const printer of checkPrinters) {
-            await this.printersService.sendToNetworkPrinter(printer.ip, receiptWithPrices, port, { cut: true });
-          }
-        } else if (process.env.CHECK_PRINTER_IP) {
-          await this.printersService.sendToNetworkPrinter(
-            process.env.CHECK_PRINTER_IP,
-            receiptWithPrices,
-            port,
-            { cut: true },
-          );
-        }
-      }
+      });
+      await Promise.all([customerPrintPromise, ...kitchenPrintPromises]);
     } else if (status === OrderStatus.PENDING) {
       if (selectedPrinter) {
         await this.printersService.sendToNetworkPrinter(selectedPrinter.ip, receiptWithPrices, port, { cut: true });
@@ -848,6 +853,29 @@ export class OrdersService {
     const netSalesTodayResult = await qbToday.getRawOne<{ sum: string }>();
     const netSalesToday = parseFloat(netSalesTodayResult?.sum ?? '0') || 0;
 
+    // Today order counts by status (run early with explicit params so dateFrom/dateTo cannot affect it)
+    const todayCountQb = this.orderRepository
+      .createQueryBuilder('o')
+      .select('o.status', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .where('o.createdAt >= :todayStartBound', { todayStartBound: todayStart })
+      .andWhere('o.createdAt <= :todayEndBound', { todayEndBound: todayEnd })
+      .groupBy('o.status');
+    const todayCountRows = await todayCountQb.getRawMany<{ status: string; count: string }>();
+    const todayOrderCountByStatus = {
+      pending: 0,
+      accepted: 0,
+      cancelled: 0,
+      completed: 0,
+    };
+    for (const row of todayCountRows) {
+      const count = parseInt(row.count, 10) || 0;
+      if (row.status === OrderStatus.PENDING) todayOrderCountByStatus.pending = count;
+      else if (row.status === OrderStatus.ACCEPTED) todayOrderCountByStatus.accepted = count;
+      else if (row.status === OrderStatus.CANCELLED) todayOrderCountByStatus.cancelled = count;
+      else if (row.status === OrderStatus.COMPLETED) todayOrderCountByStatus.completed = count;
+    }
+
     const qbRange = this.orderRepository
       .createQueryBuilder('o')
       .select('COALESCE(SUM(o.totalAmount), 0)', 'sum')
@@ -893,28 +921,6 @@ export class OrdersService {
       else if (row.status === OrderStatus.ACCEPTED) orderCountByStatus.accepted = count;
       else if (row.status === OrderStatus.CANCELLED) orderCountByStatus.cancelled = count;
       else if (row.status === OrderStatus.COMPLETED) orderCountByStatus.completed = count;
-    }
-
-    const todayCountQb = this.orderRepository
-      .createQueryBuilder('o')
-      .select('o.status', 'status')
-      .addSelect('COUNT(*)', 'count')
-      .where('o.createdAt >= :todayStart', { todayStart })
-      .andWhere('o.createdAt <= :todayEnd', { todayEnd })
-      .groupBy('o.status');
-    const todayCountRows = await todayCountQb.getRawMany<{ status: string; count: string }>();
-    const todayOrderCountByStatus = {
-      pending: 0,
-      accepted: 0,
-      cancelled: 0,
-      completed: 0,
-    };
-    for (const row of todayCountRows) {
-      const count = parseInt(row.count, 10) || 0;
-      if (row.status === OrderStatus.PENDING) todayOrderCountByStatus.pending = count;
-      else if (row.status === OrderStatus.ACCEPTED) todayOrderCountByStatus.accepted = count;
-      else if (row.status === OrderStatus.CANCELLED) todayOrderCountByStatus.cancelled = count;
-      else if (row.status === OrderStatus.COMPLETED) todayOrderCountByStatus.completed = count;
     }
 
     const rangeParams: { dateFrom?: Date; dateTo?: Date } = {};

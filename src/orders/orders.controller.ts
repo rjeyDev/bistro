@@ -11,11 +11,12 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBody } from '@nestjs/swagger';
 import { OrdersService, OrderStatsResponse } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ReprintOrderDto } from './dto/reprint-order.dto';
+import { AcceptOrderDto } from './dto/accept-order.dto';
 import { Order } from './order.entity';
 import { OrderStatus } from './enums/order-status.enum';
 import { parseLang } from '../common/lang';
@@ -117,11 +118,15 @@ export class OrdersController {
   }
 
   @Patch(':id/accept')
-  @ApiOperation({ summary: 'Accept a pending order' })
+  @ApiOperation({ summary: 'Accept a pending order (optional: send printerId to use for check printing)' })
+  @ApiBody({ type: AcceptOrderDto, required: false, description: 'Optional printer ID for check printing' })
   @ApiResponse({ status: 200, description: 'Order accepted successfully' })
   @ApiResponse({ status: 400, description: 'Cannot accept order' })
-  async accept(@Param('id') id: string): Promise<Order> {
-    return await this.ordersService.acceptOrder(parseOrderId(id));
+  async accept(
+    @Param('id') id: string,
+    @Body() dto: AcceptOrderDto = {},
+  ): Promise<Order> {
+    return await this.ordersService.acceptOrder(parseOrderId(id), dto?.printerId);
   }
 
   @Patch(':id/cancel')
