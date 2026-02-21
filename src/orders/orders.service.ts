@@ -677,7 +677,7 @@ export class OrdersService {
     receipt += `${ESC_BOLD_ON}${typeLine}${ESC_BOLD_OFF}\n`;
 
     if (!hidePrices) {
-      receipt += `${L.date} ${order.createdAt.getDay()}/${order.createdAt.getMonth()}/${order.createdAt.getFullYear()}, ${order.createdAt.getHours()}:${order.createdAt.getMinutes()}\n`;
+      receipt += `${L.date} ${order.createdAt.toLocaleString()}\n`;
       if (order.notes) {
         const notesText = lang === 'tm' ? tmToAscii(order.notes) : order.notes;
         receipt += `${L.notes} ${notesText}\n`;
