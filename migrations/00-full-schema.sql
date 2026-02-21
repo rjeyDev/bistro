@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS orders (
   "id" SERIAL PRIMARY KEY,
   "createdAt" TIMESTAMP NOT NULL DEFAULT NOW(),
   "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW(),
-  "orderNumber" INT NOT NULL,
+  "orderNumber" INT,
   "status" order_status_enum NOT NULL DEFAULT 'Pending',
   "type" order_type_enum NOT NULL,
   "totalAmount" DOUBLE PRECISION NOT NULL,

@@ -24,7 +24,7 @@ export class OrdersGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   notifyNewOrder(order: Order): void {
-    this.logger.log(`Broadcasting new order: ${order.orderNumber}`);
+    this.logger.log(`Broadcasting new order: ${order.orderNumber ?? '—'}`);
     this.server.emit('new-order', order);
   }
 }

@@ -58,7 +58,8 @@ export class OrdersService {
 
     const status =
       source === 'Admin' ? OrderStatus.ACCEPTED : OrderStatus.PENDING;
-    const orderNumber = await this.generateOrderNumber();
+    const orderNumber =
+      type === OrderType.DINE_IN ? await this.generateOrderNumber() : null;
     const deliveryAmount =
       type === OrderType.DELIVERY ? (deliveryPrice ?? 0) : 0;
 
@@ -610,7 +611,7 @@ export class OrdersService {
       titleCustomer: 'ЧЕК КЛИЕНТА',
       table: 'Стол №',
       type: 'Тип:',
-      typeDineIn: 'На месте',
+      typeDineIn: 'В зале',
       typeTakeaway: 'С собой',
       typeDelivery: 'Доставка',
       date: 'Дата:',
@@ -624,7 +625,7 @@ export class OrdersService {
       delivery: 'Доставка:',
       totalLabel: 'ИТОГО:',
       thanks: 'СПАСИБО ЗА ЗАКАЗ!',
-      enjoy: 'Приятного аппетита.',
+      enjoy: '3-11-30  |  3-11-35',
       unknownProduct: 'Неизвестный товар',
     };
     const labelsTm = {
@@ -632,21 +633,21 @@ export class OrdersService {
       titleCustomer: 'MUSDERI CEKI',
       table: 'Stol No',
       type: 'Gornus:',
-      typeDineIn: 'Yerinde',
-      typeTakeaway: 'Elgetme',
-      typeDelivery: 'Getirilen',
+      typeDineIn: 'Zalda',
+      typeTakeaway: 'Ozi bilen',
+      typeDelivery: 'Dostawka',
       date: 'Sene:',
-      notes: 'Belli:',
+      notes: 'Bellik:',
       product: 'Haryt',
       qty: 'Sany',
       price: 'Baha',
       total: 'Jemi',
       extra: 'Gosmaca:',
       options: 'Opsiyalar:',
-      delivery: 'Getirilen:',
+      delivery: 'Dostawka:',
       totalLabel: 'JEMI:',
-      thanks: 'SARGYT UCIN SAGBOL!',
-      enjoy: 'Lezzetli iymitler!',
+      thanks: 'SARGYT UCIN SAG BOLUN!',
+      enjoy: '3-11-30  |  3-11-35',
       unknownProduct: 'Nebelli haryt',
     };
     const L = lang === 'ru' ? labelsRu : labelsTm;
@@ -668,20 +669,22 @@ export class OrdersService {
       : `${center(L.titleCustomer)}\n`;
     receipt += hidePrices ? '' : `${divider}\n`;
 
-    const tableLine = `${L.table} ${order.orderNumber}`;
     const typeLine = `${L.type} ${typeText}`;
-
-    receipt += `${ESC_SIZE_UP}${ESC_BOLD_ON}${tableLine}${ESC_BOLD_OFF}${ESC_SIZE_NORMAL}\n`;
+    if (order.orderNumber != null) {
+      const tableLine = `${L.table} ${order.orderNumber}`;
+      receipt += `${ESC_SIZE_UP}${ESC_BOLD_ON}${tableLine}${ESC_BOLD_OFF}${ESC_SIZE_NORMAL}\n`;
+    }
     receipt += `${ESC_BOLD_ON}${typeLine}${ESC_BOLD_OFF}\n`;
 
     if (!hidePrices) {
-      receipt += `${L.date} ${order.createdAt.toLocaleString()}\n`;
+      receipt += `${L.date} ${order.createdAt.getDay()}/${order.createdAt.getMonth()}/${order.createdAt.getFullYear()}, ${order.createdAt.getHours()}:${order.createdAt.getMinutes()}\n`;
+      if (order.notes) {
+        const notesText = lang === 'tm' ? tmToAscii(order.notes) : order.notes;
+        receipt += `${L.notes} ${notesText}\n`;
+      }
     }
 
-    if (order.notes) {
-      const notesText = lang === 'tm' ? tmToAscii(order.notes) : order.notes;
-      receipt += `${L.notes} ${notesText}\n`;
-    }
+    
     if (hidePrices) {
       receipt += `${kitchenTableTop}\n`;
       receipt += `${ESC_BOLD_ON}${kitchenTableRow(L.product, L.qty)}${ESC_BOLD_OFF}\n`;
@@ -796,6 +799,10 @@ export class OrdersService {
         ESC_SIZE_NORMAL +
         '\n\n';
     }
+    if (order.notes) {
+      const notesText = lang === 'tm' ? tmToAscii(order.notes) : order.notes;
+      receipt += `${L.notes} ${notesText}\n`;
+    }
     receipt += hidePrices ? '' : `${divider}\n`;
     if (!hidePrices) {
       receipt += `${center(L.thanks)}\n`;
@@ -815,17 +822,24 @@ export class OrdersService {
   }
 
   /**
-   * Reprint the order check (receipt with prices) to the given list of printer IDs.
+   * Reprint the order check to the given list of printer IDs.
+   * - Kitchen printers (isKitchen: true): minimalistic receipt without prices.
+   * - Non-kitchen printers: full receipt with prices.
    */
   async reprintOrder(orderId: number, printerIds: number[]): Promise<{ message: string }> {
     const order = await this.findOne(orderId);
-    const receipt = this.generateReceiptText(order, { hidePrices: false });
+    const receiptWithPrices = this.generateReceiptText(order, { hidePrices: false });
+    const receiptNoPrices = this.generateReceiptText(order, { hidePrices: true });
     const port = parseInt(process.env.CHECK_PRINTER_PORT || '9100', 10);
     let sent = 0;
     for (const pid of printerIds) {
       try {
         const printer = await this.printersService.findOne(pid);
-        await this.printersService.sendToNetworkPrinter(printer.ip, receipt, port, { cut: true });
+        const text = printer.isKitchen ? receiptNoPrices : receiptWithPrices;
+        await this.printersService.sendToNetworkPrinter(printer.ip, text, port, { cut: true });
+        if (printer.isKitchen) {
+          await this.printersService.beepPrinter(printer.ip, port);
+        }
         sent++;
       } catch {
         // Skip invalid or missing printer
@@ -991,11 +1005,12 @@ export class OrdersService {
     const dayStart = new Date(`${today}T00:00:00.000Z`);
     const dayEnd = new Date(`${today}T23:59:59.999Z`);
 
-    // Find the highest table number (orderNumber) used today
+    // Find the highest table number (orderNumber) used today (only DineIn orders have orderNumber)
     const lastOrderToday = await this.orderRepository
       .createQueryBuilder('order')
       .where('order.createdAt >= :dayStart', { dayStart })
       .andWhere('order.createdAt <= :dayEnd', { dayEnd })
+      .andWhere('order.orderNumber IS NOT NULL')
       .orderBy('order.orderNumber', 'DESC')
       .getOne();
 

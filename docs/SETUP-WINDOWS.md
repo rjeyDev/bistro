@@ -290,3 +290,7 @@ Do these in order:
 ---
 
 Once these steps are done, you have Node.js, PostgreSQL, pgAdmin, and the BayTown backend running on Windows from zero.
+
+
+# If you use a migration runner, run it. Otherwise run manually:
+psql -d your_database -f migrations/make-order-number-nullable.sql

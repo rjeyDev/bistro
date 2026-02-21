@@ -302,9 +302,9 @@ async function seed() {
       await orderItemRepository.save(order1Items);
       console.log(`✅ Created order ${order1.orderNumber} (${order1.status})`);
 
-      // Order 2: Accepted (from desktop - won't trigger socket event, but will print check)
+      // Order 2: Accepted (from desktop - won't trigger socket event, but will print check). Takeaway has no table number.
       const order2 = orderRepository.create({
-        orderNumber: 2,
+        orderNumber: null,
         status: OrderStatus.ACCEPTED,
         type: OrderType.TAKEAWAY,
         totalAmount: 22.46,
@@ -330,7 +330,7 @@ async function seed() {
       }),
     ];
       await orderItemRepository.save(order2Items);
-      console.log(`✅ Created order ${order2.orderNumber} (${order2.status})`);
+      console.log(`✅ Created order ${order2.orderNumber ?? '—'} (${order2.status})`);
     }
 
     console.log('🎉 Database seeding completed successfully!');

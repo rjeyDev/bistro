@@ -20,8 +20,9 @@ export class Order {
 
   @UpdateDateColumn({ type: 'timestamp' })
   updatedAt: Date;
-  @Column({ type: 'int' })
-  orderNumber: number;
+  /** Table/order number for DineIn only; null for Delivery and Takeaway */
+  @Column({ type: 'int', nullable: true })
+  orderNumber: number | null;
 
   @Column({
     type: 'enum',
