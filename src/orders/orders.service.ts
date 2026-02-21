@@ -799,7 +799,7 @@ export class OrdersService {
         ESC_SIZE_NORMAL +
         '\n\n';
     }
-    if (order.notes) {
+    if (order.notes && hidePrices) {
       const notesText = lang === 'tm' ? tmToAscii(order.notes) : order.notes;
       receipt += `${L.notes} ${notesText}\n`;
     }
