@@ -1005,13 +1005,16 @@ export class OrdersService {
     const dayStart = new Date(`${today}T00:00:00.000Z`);
     const dayEnd = new Date(`${today}T23:59:59.999Z`);
 
-    // Find the highest table number (orderNumber) used today (only DineIn orders have orderNumber)
+    // Find the last used table number (orderNumber) today (only DineIn orders have orderNumber)
     const lastOrderToday = await this.orderRepository
       .createQueryBuilder('order')
       .where('order.createdAt >= :dayStart', { dayStart })
       .andWhere('order.createdAt <= :dayEnd', { dayEnd })
       .andWhere('order.orderNumber IS NOT NULL')
-      .orderBy('order.orderNumber', 'DESC')
+      // IMPORTANT: order by createdAt so we get the *latest* order,
+      // not the *largest* orderNumber. This allows cycling 1..50:
+      // e.g. ..., 49, 50, 1, 2, ...
+      .orderBy('order.createdAt', 'DESC')
       .getOne();
 
     let nextNumber = 1;
