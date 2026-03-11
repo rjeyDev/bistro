@@ -36,6 +36,9 @@ export type OrderStatsResponse = {
   }>;
 };
 
+/** Max table/order number per day (1..MAX_ORDER_NUMBER); after this it resets to 1 */
+const MAX_ORDER_NUMBER = 40;
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -1012,15 +1015,15 @@ export class OrdersService {
       .andWhere('order.createdAt <= :dayEnd', { dayEnd })
       .andWhere('order.orderNumber IS NOT NULL')
       // IMPORTANT: order by createdAt so we get the *latest* order,
-      // not the *largest* orderNumber. This allows cycling 1..50:
-      // e.g. ..., 49, 50, 1, 2, ...
+      // not the *largest* orderNumber. This allows cycling 1..40:
+      // e.g. ..., 39, 40, 1, 2, ...
       .orderBy('order.createdAt', 'DESC')
       .getOne();
 
     let nextNumber = 1;
     if (lastOrderToday && lastOrderToday.orderNumber != null) {
       const current = lastOrderToday.orderNumber;
-      nextNumber = current >= 50 ? 1 : current + 1;
+      nextNumber = current >= MAX_ORDER_NUMBER ? 1 : current + 1;
     }
 
     return nextNumber;
