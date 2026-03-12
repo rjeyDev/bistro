@@ -12,7 +12,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBody } from '@nestjs/swagger';
-import { OrdersService, OrderStatsResponse } from './orders.service';
+import { OrdersService, OrderStatsResponse, PaginatedOrdersResponse } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ReprintOrderDto } from './dto/reprint-order.dto';
@@ -46,27 +46,33 @@ export class OrdersController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all orders (optional: filter by status, order number, date range)' })
+  @ApiOperation({ summary: 'Get orders with pagination (optional: filter by status, order number, date range)' })
   @ApiQuery({ name: 'status', required: false, enum: OrderStatus, description: 'Filter by order status' })
   @ApiQuery({ name: 'orderId', required: false, type: Number, description: 'Filter by order primary key id' })
   @ApiQuery({ name: 'orderNumber', required: false, type: Number, description: 'Filter by order number (visible order #)' })
   @ApiQuery({ name: 'dateFrom', required: false, type: String, description: 'Start of date range (ISO date e.g. 2025-02-01)' })
   @ApiQuery({ name: 'dateTo', required: false, type: String, description: 'End of date range (ISO date e.g. 2025-02-07)' })
+  @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page (default: 20, max: 100)' })
   @ApiQuery({ name: 'lang', required: false, enum: ['tm', 'ru', 'en'], description: 'Language for product names in order items (tm, ru, en). Default: en' })
-  @ApiResponse({ status: 200, description: 'Return all orders with product names in requested language' })
+  @ApiResponse({ status: 200, description: 'Return paginated orders: { items, total, page, limit, totalPages }' })
   async findAll(
     @Query('status') status?: OrderStatus,
     @Query('orderId') orderId?: string,
     @Query('orderNumber') orderNumber?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('lang') lang?: string,
-  ): Promise<Order[]> {
+  ): Promise<PaginatedOrdersResponse> {
     const filters: {
       orderId?: number;
       orderNumber?: number;
       dateFrom?: string;
       dateTo?: string;
+      page?: number;
+      limit?: number;
     } = {};
     if (orderId != null && orderId !== '') {
       const id = parseInt(orderId, 10);
@@ -78,6 +84,14 @@ export class OrdersController {
     }
     if (dateFrom) filters.dateFrom = dateFrom;
     if (dateTo) filters.dateTo = dateTo;
+    if (page != null && page !== '') {
+      const p = parseInt(page, 10);
+      if (!Number.isNaN(p)) filters.page = p;
+    }
+    if (limit != null && limit !== '') {
+      const l = parseInt(limit, 10);
+      if (!Number.isNaN(l)) filters.limit = l;
+    }
     return await this.ordersService.findAll(status, parseLang(lang), filters);
   }
 

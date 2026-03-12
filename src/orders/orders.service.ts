@@ -36,6 +36,14 @@ export type OrderStatsResponse = {
   }>;
 };
 
+export type PaginatedOrdersResponse = {
+  items: Order[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
 /** Max table/order number per day (1..MAX_ORDER_NUMBER); after this it resets to 1 */
 const MAX_ORDER_NUMBER = 40;
 
@@ -171,8 +179,14 @@ export class OrdersService {
       orderNumber?: number;
       dateFrom?: string;
       dateTo?: string;
+      page?: number;
+      limit?: number;
     },
-  ): Promise<Order[]> {
+  ): Promise<PaginatedOrdersResponse> {
+    const page = Math.max(1, filters?.page ?? 1);
+    const limit = Math.min(100, Math.max(1, filters?.limit ?? 20));
+    const skip = (page - 1) * limit;
+
     const qb = this.orderRepository
       .createQueryBuilder('order')
       .leftJoinAndSelect('order.items', 'items')
@@ -202,9 +216,12 @@ export class OrdersService {
       qb.andWhere('order.createdAt <= :dateTo', { dateTo: to });
     }
 
-    const orders = await qb.getMany();
+    const [orders, total] = await qb.skip(skip).take(limit).getManyAndCount();
     await this.ensureProductsLoadedForOrderItems(orders);
-    return this.attachProductNamesAndPrices(orders, lang);
+    const items = this.attachProductNamesAndPrices(orders, lang);
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return { items, total, page, limit, totalPages };
   }
 
   async findOne(id: number, lang?: Lang): Promise<Order> {

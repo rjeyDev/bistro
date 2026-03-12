@@ -258,79 +258,73 @@ async function seed() {
       console.log(`✅ Using existing ${products.length} products`);
     }
 
-    // Create 2 orders
-    console.log('📦 Creating orders...');
+    // Create many orders
+    const ORDERS_TO_CREATE = 120;
+    console.log(`📦 Creating orders (${ORDERS_TO_CREATE})...`);
 
-    // Check if orders already exist
     const existingOrders = await orderRepository.find();
     if (existingOrders.length > 0) {
       console.log(`✅ Using existing ${existingOrders.length} orders`);
     } else {
-    // Note: Order numbers reset daily at noon (12:00 PM)
-    // Orders before noon: 00000001, 00000002, etc.
-    // Orders after noon: reset to 00000001, 00000002, etc.
-    //
-    // Print check is automatically generated when orders are accepted
+      const statuses = [OrderStatus.PENDING, OrderStatus.ACCEPTED, OrderStatus.COMPLETED, OrderStatus.CANCELLED];
+      const types = [OrderType.DINE_IN, OrderType.TAKEAWAY, OrderType.DELIVERY];
+      const paymentMethods = ['Cash', 'Credit Card', 'Card'];
+      const devices = ['tablet', 'kiosk', 'desktop', 'mobile'];
 
-      // Order 1: Pending (from tablet - will trigger socket event)
-      const order1 = orderRepository.create({
-        orderNumber: 1,
-        status: OrderStatus.PENDING,
-        type: OrderType.DINE_IN,
-        totalAmount: 14.97,
-        paymentMethod: 'Cash',
-        device: 'tablet',
-      });
-      const savedOrder1 = await orderRepository.save(order1);
+      let dineInOrderNumber = 0;
 
-      const order1Items = [
-        orderItemRepository.create({
-          orderId: savedOrder1.id,
-          productId: products[0].id, // Classic Burger
-          quantity: 1,
-          price: products[0].price,
-          options: { size: 'Regular', extras: ['Cheese', 'Lettuce'] },
-        }),
-        orderItemRepository.create({
-          orderId: savedOrder1.id,
-          productId: products[1].id, // Crispy Fries
-          quantity: 2,
-          price: products[1].price,
-          options: null,
-        }),
-      ];
-      await orderItemRepository.save(order1Items);
-      console.log(`✅ Created order ${order1.orderNumber} (${order1.status})`);
+      for (let i = 0; i < ORDERS_TO_CREATE; i++) {
+        const status = statuses[i % statuses.length];
+        const type = types[i % types.length];
+        const orderNumber = type === OrderType.DINE_IN ? (dineInOrderNumber++ % 40) + 1 : null;
 
-      // Order 2: Accepted (from desktop - won't trigger socket event, but will print check). Takeaway has no table number.
-      const order2 = orderRepository.create({
-        orderNumber: null,
-        status: OrderStatus.ACCEPTED,
-        type: OrderType.TAKEAWAY,
-        totalAmount: 22.46,
-        paymentMethod: 'Credit Card',
-        device: 'desktop',
-      });
-      const savedOrder2 = await orderRepository.save(order2);
+        // Spread createdAt over last 14 days (older orders first in loop)
+        const daysAgo = 14 - Math.floor((i / ORDERS_TO_CREATE) * 14);
+        const createdAt = new Date();
+        createdAt.setDate(createdAt.getDate() - daysAgo);
+        createdAt.setHours(8 + (i % 12), (i * 7) % 60, 0, 0);
 
-    const order2Items = [
-      orderItemRepository.create({
-        orderId: savedOrder2.id,
-        productId: products[0].id, // Classic Burger
-        quantity: 2,
-        price: products[0].price,
-        options: { size: 'Large', extras: ['Bacon', 'Extra Cheese'] },
-      }),
-      orderItemRepository.create({
-        orderId: savedOrder2.id,
-        productId: products[2].id, // Coca Cola
-        quantity: 2,
-        price: products[2].price,
-        options: { size: 'Large' },
-      }),
-    ];
-      await orderItemRepository.save(order2Items);
-      console.log(`✅ Created order ${order2.orderNumber ?? '—'} (${order2.status})`);
+        const order = orderRepository.create({
+          orderNumber,
+          status,
+          type,
+          totalAmount: 0,
+          deliveryPrice: type === OrderType.DELIVERY ? 1.5 + (i % 3) : 0,
+          paymentMethod: paymentMethods[i % paymentMethods.length],
+          device: devices[i % devices.length],
+          notes: i % 5 === 0 ? 'Please add napkins' : null,
+        });
+        (order as any).createdAt = createdAt;
+        (order as any).updatedAt = createdAt;
+        const savedOrder = await orderRepository.save(order);
+
+        // 1–4 items per order, random products and quantities
+        const numItems = 1 + (i % 4);
+        let orderTotal = 0;
+        for (let j = 0; j < numItems; j++) {
+          const product = products[(i + j) % products.length];
+          const quantity = 1 + (i + j) % 3;
+          const itemTotal = Number(product.price) * quantity;
+          orderTotal += itemTotal;
+          const orderItem = orderItemRepository.create({
+            orderId: savedOrder.id,
+            productId: product.id,
+            quantity,
+            price: product.price,
+            options: j === 0 && product.id === products[0].id ? { size: 'Regular', extras: ['Cheese'] } : null,
+          });
+          await orderItemRepository.save(orderItem);
+        }
+        if (order.type === OrderType.DELIVERY) {
+          orderTotal += Number((savedOrder as any).deliveryPrice ?? 0);
+        }
+        await orderRepository.update(savedOrder.id, { totalAmount: orderTotal });
+
+        if ((i + 1) % 30 === 0 || i === ORDERS_TO_CREATE - 1) {
+          console.log(`✅ Created ${i + 1}/${ORDERS_TO_CREATE} orders`);
+        }
+      }
+      console.log(`✅ Created ${ORDERS_TO_CREATE} orders`);
     }
 
     console.log('🎉 Database seeding completed successfully!');
