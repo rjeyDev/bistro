@@ -28,6 +28,7 @@ export type OrderStatsResponse = {
   netSalesInRange: number;
   orderCountByStatus: { pending: number; accepted: number; cancelled: number; completed: number };
   todayOrderCountByStatus: { pending: number; accepted: number; cancelled: number; completed: number };
+  totalProductsSold: number;
   mostSoldProducts: Array<{
     productId: number;
     name: string;
@@ -379,6 +380,18 @@ export class OrdersService {
       await this.orderRepository.save(order);
     }
     if (updateOrderDto.type !== undefined) {
+      if (
+        order.type === OrderType.DINE_IN &&
+        updateOrderDto.type !== OrderType.DINE_IN
+      ) {
+        order.orderNumber = null;
+      }
+      if (
+        order.type !== OrderType.DINE_IN &&
+        updateOrderDto.type === OrderType.DINE_IN
+      ) {
+        order.orderNumber = await this.generateOrderNumber();
+      }
       order.type = updateOrderDto.type;
       await this.orderRepository.save(order);
     }
@@ -696,8 +709,8 @@ export class OrdersService {
     }
     receipt += `${ESC_BOLD_ON}${typeLine}${ESC_BOLD_OFF}\n`;
 
+    receipt += `${L.date} ${order.createdAt.toLocaleString()}\n`;
     if (!hidePrices) {
-      receipt += `${L.date} ${order.createdAt.toLocaleString()}\n`;
       if (order.notes) {
         const notesText = lang === 'tm' ? tmToAscii(order.notes) : order.notes;
         receipt += `${L.notes} ${notesText}\n`;
@@ -872,7 +885,12 @@ export class OrdersService {
    * Order statistics: net sales (today and date range), order counts by status, most sold products.
    * Only Accepted and Completed orders count toward sales. If no date range, range = all time.
    */
-  async getStats(dateFrom?: string, dateTo?: string): Promise<OrderStatsResponse> {
+  async getStats(
+    dateFrom?: string,
+    dateTo?: string,
+    status?: OrderStatus,
+    type?: OrderType,
+  ): Promise<OrderStatsResponse> {
     const salesStatuses = [OrderStatus.ACCEPTED, OrderStatus.COMPLETED];
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
@@ -914,6 +932,12 @@ export class OrdersService {
       .createQueryBuilder('o')
       .select('COALESCE(SUM(o.totalAmount), 0)', 'sum')
       .where('o.status IN (:...salesStatuses)', { salesStatuses });
+    if (status) {
+      qbRange.andWhere('o.status = :status', { status });
+    }
+    if (type) {
+      qbRange.andWhere('o.type = :type', { type });
+    }
     if (dateFrom) {
       const from = new Date(dateFrom);
       from.setUTCHours(0, 0, 0, 0);
@@ -932,6 +956,12 @@ export class OrdersService {
       .select('o.status', 'status')
       .addSelect('COUNT(*)', 'count')
       .groupBy('o.status');
+    if (status) {
+      countQb.andWhere('o.status = :status', { status });
+    }
+    if (type) {
+      countQb.andWhere('o.type = :type', { type });
+    }
     if (dateFrom) {
       const from = new Date(dateFrom);
       from.setUTCHours(0, 0, 0, 0);
@@ -994,6 +1024,8 @@ export class OrdersService {
       .groupBy('oi.productId')
       .addGroupBy('p.nameEn')
       .orderBy('SUM("oi"."quantity")', 'DESC');
+    if (status) productQb.andWhere('o.status = :status', { status });
+    if (type) productQb.andWhere('o.type = :type', { type });
     if (rangeParams.dateFrom) productQb.andWhere('o.createdAt >= :dateFrom', rangeParams);
     if (rangeParams.dateTo) productQb.andWhere('o.createdAt <= :dateTo', rangeParams);
 
@@ -1009,12 +1041,17 @@ export class OrdersService {
       quantitySold: parseInt(row.quantitySold, 10) || 0,
       totalRevenue: parseFloat(row.totalRevenue ?? '0') || 0,
     }));
+    const totalProductsSold = mostSoldProducts.reduce(
+      (sum, p) => sum + p.quantitySold,
+      0,
+    );
 
     return {
       netSalesToday,
       netSalesInRange,
       orderCountByStatus,
       todayOrderCountByStatus,
+      totalProductsSold,
       mostSoldProducts,
     };
   }

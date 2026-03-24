@@ -19,6 +19,7 @@ import { ReprintOrderDto } from './dto/reprint-order.dto';
 import { AcceptOrderDto } from './dto/accept-order.dto';
 import { Order } from './order.entity';
 import { OrderStatus } from './enums/order-status.enum';
+import { OrderType } from './enums/order-type.enum';
 import { parseLang } from '../common/lang';
 
 /** Ensures :id is a valid positive integer; throws BadRequestException otherwise. */
@@ -99,12 +100,27 @@ export class OrdersController {
   @ApiOperation({ summary: 'Get order statistics (net sales, counts by status, most sold products)' })
   @ApiQuery({ name: 'dateFrom', required: false, type: String, description: 'Start of date range (e.g. 2025-02-01)' })
   @ApiQuery({ name: 'dateTo', required: false, type: String, description: 'End of date range (e.g. 2025-02-07)' })
-  @ApiResponse({ status: 200, description: 'Net sales today and in range, order counts by status, most sold products' })
+  @ApiQuery({ name: 'status', required: false, enum: OrderStatus, description: 'Filter stats by order status' })
+  @ApiQuery({ name: 'type', required: false, enum: ['DineIn', 'Takeaway', 'Delivery'], description: 'Filter stats by order type' })
+  @ApiResponse({ status: 200, description: 'Net sales, counts by status, total sold items and most sold products (sorted by quantitySold DESC)' })
   async getStats(
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
+    @Query('status') status?: OrderStatus,
+    @Query('type') type?: string,
   ): Promise<OrderStatsResponse> {
-    return await this.ordersService.getStats(dateFrom, dateTo);
+    const normalizedType =
+      type === OrderType.DINE_IN ||
+      type === OrderType.TAKEAWAY ||
+      type === OrderType.DELIVERY
+        ? type
+        : undefined;
+    return await this.ordersService.getStats(
+      dateFrom,
+      dateTo,
+      status,
+      normalizedType,
+    );
   }
 
   @Get(':id')
